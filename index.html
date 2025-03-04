@@ -77,12 +77,18 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/javascript/javascript.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/css/css.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/htmlmixed/htmlmixed.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/markdown/markdown.min.js"></script>
 
   <script>
     /************ CodeMirror Setup with LocalStorage Persistence ************/
     const editor = CodeMirror.fromTextArea(document.getElementById('code'), {
-      lineNumbers: true,
-      mode: "htmlmixed"
+        lineNumbers: true,
+  mode: "markdown",
+  theme: "default",
+  lineWrapping: true,
+  extraKeys: {
+    "Enter": "newlineAndIndentContinueMarkdownList"
+  }
     });
     // Load saved text (if any)
     const savedText = localStorage.getItem("codemirror-text");
@@ -296,73 +302,47 @@
   }
 });
 
-
-    canvas.addEventListener('mouseup', (e) => {
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-
-      if (isDrawing) {
+canvas.addEventListener('mouseup', (e) => {
+  if (isDrawing) {
     isDrawing = false;
-    if (currentShape) {
+    if (currentMode === 'draw' && currentShape) {
       shapes.push(currentShape);
-      saveState(); // Save state after adding shape
       currentShape = null;
-    }
-}
-      
-      if (currentMode === 'draw' && isDrawing) {
-        shapes.push(currentShape);
-        saveShapes();
-        currentShape = null;
-        isDrawing = false;
-        render();
-      } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') && isDrawing) {
-        if (currentMode === 'square') {
-          const shape = {
-            type: 'square',
-            x: Math.min(startX, x),
-            y: Math.min(startY, y),
-            width: Math.abs(x - startX),
-            height: Math.abs(y - startY)
-          };
-          shapes.push(shape);
-        } else if (currentMode === 'circle') {
-          const radius = Math.hypot(x - startX, y - startY);
-          const shape = { type: 'circle', x: startX, y: startY, radius: radius };
-          shapes.push(shape);
-        } else if (currentMode === 'arrow') {
-          const shape = { type: 'arrow', startX: startX, startY: startY, endX: x, endY: y };
-          shapes.push(shape);
-        }
-        previewShape = null;
-        isDrawing = false;
-        saveShapes();
-        render();
-      } else if (currentMode === 'select') {
-        if (draggingSelected) {
-          draggingSelected = false;
-          saveShapes();
-        } else if (selRect) {
-          // Finalize rubber-band selection.
-          let left = Math.min(selRect.startX, selRect.endX);
-          let right = Math.max(selRect.startX, selRect.endX);
-          let top = Math.min(selRect.startY, selRect.endY);
-          let bottom = Math.max(selRect.startY, selRect.endY);
-          selectedShapes = [];
-          shapes.forEach(s => {
-            let box = getShapeBoundingBox(s);
-            if (box.x < right && (box.x + box.width) > left &&
-                box.y < bottom && (box.y + box.height) > top) {
-              selectedShapes.push(s);
-            }
-          });
-          selRect = null;
-          render();
-        }
+    } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') && previewShape) {
+      // Convert preview shape to final shape
+      if (currentMode === 'square') {
+        shapes.push({
+          type: 'square',
+          x: Math.min(previewShape.startX, previewShape.endX),
+          y: Math.min(previewShape.startY, previewShape.endY),
+          width: Math.abs(previewShape.endX - previewShape.startX),
+          height: Math.abs(previewShape.endY - previewShape.startY)
+        });
+      } else if (currentMode === 'circle') {
+        const radius = Math.hypot(previewShape.endX - previewShape.startX, 
+                                previewShape.endY - previewShape.startY);
+        shapes.push({
+          type: 'circle',
+          x: previewShape.startX,
+          y: previewShape.startY,
+          radius: radius
+        });
+      } else if (currentMode === 'arrow') {
+        shapes.push({
+          type: 'arrow',
+          startX: previewShape.startX,
+          startY: previewShape.startY,
+          endX: previewShape.endX,
+          endY: previewShape.endY
+        });
       }
-    });
-
+      previewShape = null;
+    }
+    saveState();
+    render();
+    saveShapes();
+  }
+});
 
     /************ Keyboard Events for Undo/Redo ************/
     // Add these variables at the top with your other state variables
