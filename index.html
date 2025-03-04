@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Scratchpad</title>
+  <!-- CodeMirror CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.css">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+    }
+    /* Toolbar fixed at the top */
+    #toolbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: #ddd;
+      padding: 5px;
+      z-index: 100;
+      display: flex;
+    }
+    #toolbar button {
+      margin-right: 5px;
+      font-size: 18px;
+      cursor: pointer;
+    }
+    /* Editor container below toolbar */
+    #editor-container {
+      position: absolute;
+      top: 40px;
+      bottom: 0;
+      left: 0;
+      right: 0;
+    }
+    /* CodeMirror fills its container and shows line numbers */
+    .CodeMirror {
+      height: 100%;
+    }
+    /* Canvas overlay – appended to CodeMirror wrapper */
+    #overlayCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 10;
+      pointer-events: none; /* toggled in JS based on mode */
+    }
+  </style>
+</head>
+<body>
+  <!-- Toolbar with tool buttons and tooltips -->
+  <!-- T = Code Editor, ✏ = Freehand, ▢ = Square, ◯ = Circle, ➜ = Arrow, 🔲 = Select/Move/Delete -->
+  <div id="toolbar">
+    <button id="mode-write" data-mode="write" title="Code Editor">T</button>
+    <button id="mode-draw" data-mode="draw" title="Freehand Draw">✐</button>
+    <button id="mode-square" data-mode="square" title="Draw Square">▢</button>
+    <button id="mode-circle" data-mode="circle" title="Draw Circle">◯</button>
+    <button id="mode-arrow" data-mode="arrow" title="Draw Arrow">➜</button>
+    <button id="mode-select" data-mode="select" title="Select/Move/Delete Shapes">⬚</button>
+    <button id="mode-delete" data-mode="delete" title="Delete All">✖</button>
+  </div>
+
+  <!-- Editor container for CodeMirror -->
+  <div id="editor-container">
+    <textarea id="code" name="code">
+<!-- Start typing your code here -->
+    </textarea>
+  </div>
+
+  <!-- CodeMirror Core and Required Modes -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.js"></script>
+  <!-- Extra modes for htmlmixed -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/xml/xml.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/css/css.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/htmlmixed/htmlmixed.min.js"></script>
+
+  <script>
+    /************ CodeMirror Setup with LocalStorage Persistence ************/
+    const editor = CodeMirror.fromTextArea(document.getElementById('code'), {
+      lineNumbers: true,
+      mode: "htmlmixed"
+    });
+    // Load saved text (if any)
+    const savedText = localStorage.getItem("codemirror-text");
+    if (savedText) {
+      editor.setValue(savedText);
+    }
+    // Persist changes to localStorage
+    editor.on("change", () => {
+      localStorage.setItem("codemirror-text", editor.getValue());
+    });
+
+    /************ Shapes and Canvas Setup ************/
+    let currentMode = 'write'; // Modes: write, draw, square, circle, arrow, select
+    let shapes = [];           // Array to hold drawn shapes (each may have a .text property)
+    let currentShape = null;   // For freehand drawing (draw mode)
+    let isDrawing = false;     // True when drawing is in progress
+    let startX, startY;        // Starting coordinates for shape modes
+    let previewShape = null;   // For previewing shapes during drag
+
+    // For selection mode:
+    let selectedShapes = [];      // Currently selected shapes
+    let draggingSelected = false; // True when dragging selected shapes
+    let selectionDragStart = null;// Starting point for dragging
+    let selRect = null;           // Rubber-band selection rectangle
+
+    // Append a canvas overlay inside CodeMirror's wrapper.
+    const codeMirrorWrapper = editor.getWrapperElement();
+    codeMirrorWrapper.style.position = 'relative';
+    const canvas = document.createElement('canvas');
+    canvas.id = 'overlayCanvas';
+    codeMirrorWrapper.appendChild(canvas);
+    const ctx = canvas.getContext('2d');
+
+    function resizeCanvas() {
+      canvas.width = codeMirrorWrapper.clientWidth;
+      canvas.height = codeMirrorWrapper.clientHeight;
+      editor.refresh();
+      render();
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // Set pointer events: in "write" mode let CodeMirror handle them; otherwise, canvas takes events.
+    function updateCanvasPointer() {
+      canvas.style.pointerEvents = (currentMode === 'write') ? 'none' : 'auto';
+    }
+    updateCanvasPointer();
+
+    // Toolbar button click: update current mode, highlight button, and clear selection if not in select mode.
+    document.querySelectorAll('#toolbar button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        currentMode = btn.getAttribute('data-mode');
+        updateCanvasPointer();
+        document.querySelectorAll('#toolbar button').forEach(b => b.style.background = '');
+        btn.style.background = '#bbb';
+        if (currentMode !== 'select') {
+          selectedShapes = [];
+          selRect = null;
+          draggingSelected = false;
+        }
+        if (currentMode === 'write') {
+          editor.focus();
+        }
+      });
+    });
+
+    /************ Utility Functions for Shapes ************/
+    function getShapeBoundingBox(shape) {
+      if (shape.type === 'square') {
+        return { x: shape.x, y: shape.y, width: shape.width, height: shape.height };
+      } else if (shape.type === 'circle') {
+        return { x: shape.x - shape.radius, y: shape.y - shape.radius, width: shape.radius * 2, height: shape.radius * 2 };
+      } else if (shape.type === 'draw') {
+        const xs = shape.points.map(p => p.x);
+        const ys = shape.points.map(p => p.y);
+        return {
+          x: Math.min(...xs),
+          y: Math.min(...ys),
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys)
+        };
+      } else if (shape.type === 'arrow') {
+        return {
+          x: Math.min(shape.startX, shape.endX),
+          y: Math.min(shape.startY, shape.endY),
+          width: Math.abs(shape.endX - shape.startX),
+          height: Math.abs(shape.endY - shape.startY)
+        };
+      }
+    }
+
+    // Returns the topmost shape under (x, y)
+    function getShapeAt(x, y) {
+      for (let i = shapes.length - 1; i >= 0; i--) {
+        const shape = shapes[i];
+        if (shape.type === 'square') {
+          if (x >= shape.x && x <= shape.x + shape.width &&
+              y >= shape.y && y <= shape.y + shape.height) {
+            return shape;
+          }
+        } else if (shape.type === 'circle') {
+          const dist = Math.hypot(x - shape.x, y - shape.y);
+          if (dist <= shape.radius) {
+            return shape;
+          }
+        } else if (shape.type === 'draw') {
+          const xs = shape.points.map(p => p.x);
+          const ys = shape.points.map(p => p.y);
+          const minX = Math.min(...xs), maxX = Math.max(...xs);
+          const minY = Math.min(...ys), maxY = Math.max(...ys);
+          if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
+            return shape;
+          }
+        } else if (shape.type === 'arrow') {
+          const dist = distanceToLine({x, y}, {x: shape.startX, y: shape.startY}, {x: shape.endX, y: shape.endY});
+          if (dist < 5) return shape;
+        }
+      }
+      return null;
+    }
+
+    // Helper: distance from point p to line segment v-w.
+    function distanceToLine(p, v, w) {
+      const l2 = (w.x - v.x) ** 2 + (w.y - v.y) ** 2;
+      if (l2 === 0) return Math.hypot(p.x - v.x, p.y - v.y);
+      let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
+      t = Math.max(0, Math.min(1, t));
+      const proj = { x: v.x + t * (w.x - v.x), y: v.y + t * (w.y - v.y) };
+      return Math.hypot(p.x - proj.x, p.y - proj.y);
+    }
+
+    /************ Canvas Mouse Events ************/
+    canvas.addEventListener('mousedown', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      if (currentMode === 'draw') {
+        isDrawing = true;
+        currentShape = { type: 'draw', points: [{x, y}] };
+      } else if (currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') {
+        isDrawing = true;
+        startX = x;
+        startY = y;
+      } else if (currentMode === 'select') {
+        const shape = getShapeAt(x, y);
+        if (shape) {
+          // Clicking a shape selects it.
+          selectedShapes = [shape];
+          render(); // update highlight immediately
+          draggingSelected = true;
+          selectionDragStart = { x, y };
+          // Record its initial position for dragging.
+          selectedShapes.forEach(s => {
+            if (s.type === 'square' || s.type === 'circle' || s.type === 'arrow') {
+              s.initialX = s.x;
+              s.initialY = s.y;
+            } else if (s.type === 'draw') {
+              s.initialPoints = s.points.map(p => ({ x: p.x, y: p.y }));
+            }
+          });
+        } else {
+          // If no shape is clicked, start a rubber-band selection rectangle.
+          selRect = { startX: x, startY: y, endX: x, endY: y };
+          selectedShapes = [];
+        }
+      }
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  
+  if (currentMode === 'draw' && isDrawing) {
+    const lastPoint = currentShape.points[currentShape.points.length - 1];
+    currentShape.points.push({x, y});
+    
+    // Just draw the new line segment
+    ctx.beginPath();
+    ctx.moveTo(lastPoint.x, lastPoint.y);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+  } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') && isDrawing) {
+    previewShape = { type: currentMode, startX, startY, endX: x, endY: y };
+    render();
+    drawPreview(previewShape);
+  } else if (currentMode === 'select') {
+    if (draggingSelected && selectedShapes.length > 0) {
+      let dx = x - selectionDragStart.x;
+      let dy = y - selectionDragStart.y;
+      selectedShapes.forEach(s => {
+        if (s.type === 'square' || s.type === 'circle' || s.type === 'arrow') {
+          s.x = s.initialX + dx;
+          s.y = s.initialY + dy;
+          if (s.type === 'arrow') {
+            s.startX += dx;
+            s.startY += dy;
+            s.endX += dx;
+            s.endY += dy;
+          }
+        } else if (s.type === 'draw') {
+          s.points = s.initialPoints.map(p => ({ x: p.x + dx, y: p.y + dy }));
+        }
+      });
+      render();
+    } else if (selRect) {
+      selRect.endX = x;
+      selRect.endY = y;
+      render();
+    }
+  }
+});
+
+
+    canvas.addEventListener('mouseup', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+
+      if (isDrawing) {
+    isDrawing = false;
+    if (currentShape) {
+      shapes.push(currentShape);
+      saveState(); // Save state after adding shape
+      currentShape = null;
+    }
+}
+      
+      if (currentMode === 'draw' && isDrawing) {
+        shapes.push(currentShape);
+        saveShapes();
+        currentShape = null;
+        isDrawing = false;
+        render();
+      } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') && isDrawing) {
+        if (currentMode === 'square') {
+          const shape = {
+            type: 'square',
+            x: Math.min(startX, x),
+            y: Math.min(startY, y),
+            width: Math.abs(x - startX),
+            height: Math.abs(y - startY)
+          };
+          shapes.push(shape);
+        } else if (currentMode === 'circle') {
+          const radius = Math.hypot(x - startX, y - startY);
+          const shape = { type: 'circle', x: startX, y: startY, radius: radius };
+          shapes.push(shape);
+        } else if (currentMode === 'arrow') {
+          const shape = { type: 'arrow', startX: startX, startY: startY, endX: x, endY: y };
+          shapes.push(shape);
+        }
+        previewShape = null;
+        isDrawing = false;
+        saveShapes();
+        render();
+      } else if (currentMode === 'select') {
+        if (draggingSelected) {
+          draggingSelected = false;
+          saveShapes();
+        } else if (selRect) {
+          // Finalize rubber-band selection.
+          let left = Math.min(selRect.startX, selRect.endX);
+          let right = Math.max(selRect.startX, selRect.endX);
+          let top = Math.min(selRect.startY, selRect.endY);
+          let bottom = Math.max(selRect.startY, selRect.endY);
+          selectedShapes = [];
+          shapes.forEach(s => {
+            let box = getShapeBoundingBox(s);
+            if (box.x < right && (box.x + box.width) > left &&
+                box.y < bottom && (box.y + box.height) > top) {
+              selectedShapes.push(s);
+            }
+          });
+          selRect = null;
+          render();
+        }
+      }
+    });
+
+
+    /************ Keyboard Events for Undo/Redo ************/
+    // Add these variables at the top with your other state variables
+let undoStack = [];
+let redoStack = [];
+
+// Function to save state for undo
+function saveState() {
+  redoStack = []; // Clear redo stack when new action is performed
+  undoStack.push(JSON.stringify(shapes));
+}
+
+// Function to handle undo
+function undo() {
+  if (undoStack.length > 0) {
+    redoStack.push(JSON.stringify(shapes));
+    shapes = JSON.parse(undoStack.pop());
+    render();
+  }
+}
+
+// Function to handle redo
+function redo() {
+  if (redoStack.length > 0) {
+    undoStack.push(JSON.stringify(shapes));
+    shapes = JSON.parse(redoStack.pop());
+    render();
+  }
+}
+
+// Add keyboard event listener for undo/redo
+document.addEventListener('keydown', (e) => {
+  if (e.ctrlKey || e.metaKey) { // metaKey for Mac
+    if (e.key === 'z') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        redo();
+      } else {
+        undo();
+      }
+    } else if (e.key === 'y') {
+      e.preventDefault();
+      redo();
+    }
+  }
+});
+
+    
+
+    /************ Keyboard Events for Deletion ************/
+    window.addEventListener("keydown", (e) => {
+      if (currentMode === "select" && (e.key === "Delete" || e.key === "Backspace")) {
+        shapes = shapes.filter(s => !selectedShapes.includes(s));
+        selectedShapes = [];
+        saveShapes();
+        render();
+      }
+    });
+
+    /************* Delete ********************************************/
+    // Add this click handler for the delete all button
+document.getElementById('mode-delete').addEventListener('click', () => {
+  if (confirm('Are you sure you want to delete everything? This cannot be undone.')) {
+    // Clear the canvas
+    shapes = [];
+    selectedShapes = [];
+    currentShape = null;
+    isDrawing = false;
+    previewShape = null;
+    selRect = null;
+    
+    // Clear the CodeMirror editor
+    editor.setValue('');
+    
+    // Clear the localStorage
+    localStorage.removeItem("codemirror-text");
+    
+    // Clear and reset IndexedDB shapes
+    if (db) {
+      const transaction = db.transaction("shapes", "readwrite");
+      const store = transaction.objectStore("shapes");
+      store.clear().onsuccess = function() {
+        console.log("Database cleared");
+      };
+    }
+    
+    // Reset undo/redo stacks
+    undoStack = [];
+    redoStack = [];
+    
+    // Render the empty canvas
+    render();
+    
+    // Save the empty state
+    saveShapes();
+  }
+});
+
+
+    /************ Double Click for Text Editing on Shapes ************/
+    canvas.addEventListener("dblclick", (e) => {
+  if (currentMode !== "write") {
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const shape = getShapeAt(x, y);
+    if (shape) { // Allow text editing for any shape type
+      showTextEditor(shape);
+    }
+  }
+});
+
+function showTextEditor(shape) {
+  const box = getShapeBoundingBox(shape);
+  const input = document.createElement("input");
+  input.type = "text";
+  input.value = shape.text || "";
+  input.style.position = "absolute";
+  input.style.zIndex = 200;
+  const centerX = box.x + box.width / 2;
+  const centerY = box.y + box.height / 2;
+  let newWidth = Math.max(box.width, 50);
+  let newHeight = 20;
+  
+  // Style the input to be borderless and blend with the canvas
+  input.style.width = newWidth + "px";
+  input.style.height = newHeight + "px";
+  input.style.left = (centerX - newWidth / 2) + "px";
+  input.style.top = (centerY - newHeight / 2) + "px";
+  input.style.textAlign = "center";
+  input.style.fontSize = "14px";
+  input.style.border = "none";
+  input.style.outline = "none";
+  input.style.background = "transparent";
+  input.style.padding = "0";
+  
+  codeMirrorWrapper.appendChild(input);
+  input.focus();
+
+  // Real-time text update
+  input.addEventListener("input", () => {
+    shape.text = input.value;
+    render();
+  });
+
+  let isEditing = true;
+
+  function finishEditing() {
+    if (!isEditing) return;
+    isEditing = false;
+    
+    if (input.parentNode) {
+      codeMirrorWrapper.removeChild(input);
+    }
+    saveState(); // Save state after text edit
+    render();
+    saveShapes();
+  }
+
+  input.addEventListener("blur", finishEditing);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      finishEditing();
+    }
+    if (e.key === "Escape") {
+      isEditing = false;
+      shape.text = "";
+      if (input.parentNode) {
+        codeMirrorWrapper.removeChild(input);
+      }
+      render();
+    }
+  });
+}
+
+// Make sure the render function properly handles text rendering
+function render() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  shapes.forEach(shape => {
+    ctx.beginPath();
+    if (shape.type === 'square') {
+      ctx.rect(shape.x, shape.y, shape.width, shape.height);
+    } else if (shape.type === 'circle') {
+      ctx.arc(shape.x, shape.y, shape.radius, 0, Math.PI * 2);
+    } else if (shape.type === 'draw') {
+      ctx.moveTo(shape.points[0].x, shape.points[0].y);
+      for (let i = 1; i < shape.points.length; i++) {
+        ctx.lineTo(shape.points[i].x, shape.points[i].y);
+      }
+    } else if (shape.type === 'arrow') {
+      ctx.moveTo(shape.startX, shape.startY);
+      ctx.lineTo(shape.endX, shape.endY);
+    }
+    ctx.stroke();
+
+    // Render text if it exists
+    if (shape.text) {
+      ctx.save();
+      ctx.font = "14px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      let box = getShapeBoundingBox(shape);
+      ctx.fillText(shape.text, box.x + box.width / 2, box.y + box.height / 2);
+      ctx.restore();
+    }
+  });
+
+  // Draw selection highlights if in select mode
+  if (currentMode === 'select') {
+    if (selRect) {
+      drawSelectionRectangle(selRect);
+    }
+    if (selectedShapes.length > 0) {
+      drawSelectedHighlights();
+    }
+  }
+}
+
+    /************ Drawing and Preview Rendering ************/
+    function render() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      shapes.forEach(shape => {
+        ctx.beginPath();
+        if (shape.type === 'square') {
+          ctx.rect(shape.x, shape.y, shape.width, shape.height);
+        } else if (shape.type === 'circle') {
+          ctx.arc(shape.x, shape.y, shape.radius, 0, Math.PI * 2);
+        } else if (shape.type === 'draw') {
+          ctx.moveTo(shape.points[0].x, shape.points[0].y);
+          for (let i = 1; i < shape.points.length; i++) {
+            ctx.lineTo(shape.points[i].x, shape.points[i].y);
+          }
+        } else if (shape.type === 'arrow') {
+          ctx.moveTo(shape.startX, shape.startY);
+          ctx.lineTo(shape.endX, shape.endY);
+        }
+        ctx.stroke();
+        if (shape.text) {
+          ctx.save();
+          ctx.font = "14px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          let box = getShapeBoundingBox(shape);
+          ctx.fillText(shape.text, box.x + box.width / 2, box.y + box.height / 2);
+          ctx.restore();
+        }
+        if (shape.type === 'arrow') {
+          const angle = Math.atan2(shape.endY - shape.startY, shape.endX - shape.startX);
+          const headLength = 10;
+          const arrowAngle = Math.PI / 6;
+          ctx.beginPath();
+          ctx.moveTo(shape.endX, shape.endY);
+          ctx.lineTo(shape.endX - headLength * Math.cos(angle - arrowAngle), shape.endY - headLength * Math.sin(angle - arrowAngle));
+          ctx.moveTo(shape.endX, shape.endY);
+          ctx.lineTo(shape.endX - headLength * Math.cos(angle + arrowAngle), shape.endY - headLength * Math.sin(angle + arrowAngle));
+          ctx.stroke();
+        }
+      });
+      if (currentMode === 'select') {
+        if (selRect) {
+          drawSelectionRectangle(selRect);
+        }
+        if (selectedShapes.length > 0) {
+          drawSelectedHighlights();
+        }
+      }
+    }
+
+    function drawPreview(preview) {
+      if (!preview) return;
+      ctx.save();
+      ctx.setLineDash([5, 3]);
+      ctx.beginPath();
+      if (preview.type === 'square') {
+        ctx.rect(
+          Math.min(preview.startX, preview.endX),
+          Math.min(preview.startY, preview.endY),
+          Math.abs(preview.endX - preview.startX),
+          Math.abs(preview.endY - preview.startY)
+        );
+      } else if (preview.type === 'circle') {
+        const radius = Math.hypot(preview.endX - preview.startX, preview.endY - preview.startY);
+        ctx.arc(preview.startX, preview.startY, radius, 0, Math.PI * 2);
+      } else if (preview.type === 'arrow') {
+        ctx.moveTo(preview.startX, preview.startY);
+        ctx.lineTo(preview.endX, preview.endY);
+        const angle = Math.atan2(preview.endY - preview.startY, preview.endX - preview.startX);
+        const headLength = 10;
+        const arrowAngle = Math.PI / 6;
+        ctx.moveTo(preview.endX, preview.endY);
+        ctx.lineTo(preview.endX - headLength * Math.cos(angle - arrowAngle), preview.endY - headLength * Math.sin(angle - arrowAngle));
+        ctx.moveTo(preview.endX, preview.endY);
+        ctx.lineTo(preview.endX - headLength * Math.cos(angle + arrowAngle), preview.endY - headLength * Math.sin(angle + arrowAngle));
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawSelectionRectangle(rect) {
+      ctx.save();
+      ctx.setLineDash([5, 3]);
+      ctx.strokeStyle = 'blue';
+      ctx.beginPath();
+      const left = Math.min(rect.startX, rect.endX);
+      const top = Math.min(rect.startY, rect.endY);
+      const width = Math.abs(rect.endX - rect.startX);
+      const height = Math.abs(rect.endY - rect.startY);
+      ctx.rect(left, top, width, height);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function drawSelectedHighlights() {
+      selectedShapes.forEach(s => {
+        let box = getShapeBoundingBox(s);
+        ctx.save();
+        ctx.setLineDash([5, 3]);
+        ctx.strokeStyle = 'blue';
+        ctx.beginPath();
+        ctx.rect(box.x, box.y, box.width, box.height);
+        ctx.stroke();
+        ctx.restore();
+      });
+    }
+
+    /************ IndexedDB Persistence for Shapes ************/
+    let db;
+    function openDB() {
+      return new Promise((resolve, reject) => {
+        const request = indexedDB.open("ScratchpadDB", 1);
+        request.onupgradeneeded = function(event) {
+          db = event.target.result;
+          db.createObjectStore("shapes", { keyPath: "id", autoIncrement: true });
+        };
+        request.onsuccess = function(event) {
+          db = event.target.result;
+          resolve(db);
+        };
+        request.onerror = function(event) {
+          reject("IndexedDB error");
+        };
+      });
+    }
+
+    function saveShapes() {
+      if (!db) return;
+      const transaction = db.transaction("shapes", "readwrite");
+      const store = transaction.objectStore("shapes");
+      const clearRequest = store.clear();
+      clearRequest.onsuccess = function() {
+        shapes.forEach(shape => store.add(shape));
+      };
+    }
+
+    function loadShapes() {
+      if (!db) return;
+      const transaction = db.transaction("shapes", "readonly");
+      const store = transaction.objectStore("shapes");
+      const request = store.getAll();
+      request.onsuccess = function(event) {
+        shapes = event.target.result;
+        render();
+      };
+    }
+
+    openDB().then(() => { loadShapes(); }).catch(console.error);
+  </script>
+</body>
+</html>
