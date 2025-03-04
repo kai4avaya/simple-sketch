@@ -157,27 +157,34 @@
 
     /************ Utility Functions for Shapes ************/
     function getShapeBoundingBox(shape) {
+      let box;
       if (shape.type === 'square') {
-        return { x: shape.x, y: shape.y, width: shape.width, height: shape.height };
+        box = { x: shape.x, y: shape.y, width: shape.width, height: shape.height };
       } else if (shape.type === 'circle') {
-        return { x: shape.x - shape.radius, y: shape.y - shape.radius, width: shape.radius * 2, height: shape.radius * 2 };
+        box = { x: shape.x - shape.radius, y: shape.y - shape.radius, width: shape.radius * 2, height: shape.radius * 2 };
       } else if (shape.type === 'draw') {
         const xs = shape.points.map(p => p.x);
         const ys = shape.points.map(p => p.y);
-        return {
+        box = {
           x: Math.min(...xs),
           y: Math.min(...ys),
           width: Math.max(...xs) - Math.min(...xs),
           height: Math.max(...ys) - Math.min(...ys)
         };
       } else if (shape.type === 'arrow') {
-        return {
+        box = {
           x: Math.min(shape.startX, shape.endX),
           y: Math.min(shape.startY, shape.endY),
           width: Math.abs(shape.endX - shape.startX),
           height: Math.abs(shape.endY - shape.startY)
         };
       }
+      // Add left, right, top, bottom properties
+      box.left = box.x;
+      box.right = box.x + box.width;
+      box.top = box.y;
+      box.bottom = box.y + box.height;
+      return box;
     }
 
     // Returns the topmost shape under (x, y)
@@ -221,128 +228,190 @@
     }
 
     /************ Canvas Mouse Events ************/
-    canvas.addEventListener('mousedown', (e) => {
+    canvas.addEventListener('mousemove', (e) => {
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
-      if (currentMode === 'draw') {
-        isDrawing = true;
-        currentShape = { type: 'draw', points: [{x, y}] };
-      } else if (currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') {
-        isDrawing = true;
-        startX = x;
-        startY = y;
-      } else if (currentMode === 'select') {
-        const shape = getShapeAt(x, y);
-        if (shape) {
-          // Clicking a shape selects it.
-          selectedShapes = [shape];
-          render(); // update highlight immediately
-          draggingSelected = true;
-          selectionDragStart = { x, y };
-          // Record its initial position for dragging.
-          selectedShapes.forEach(s => {
-            if (s.type === 'square' || s.type === 'circle' || s.type === 'arrow') {
-              s.initialX = s.x;
-              s.initialY = s.y;
-            } else if (s.type === 'draw') {
-              s.initialPoints = s.points.map(p => ({ x: p.x, y: p.y }));
-            }
-          });
-        } else {
-          // If no shape is clicked, start a rubber-band selection rectangle.
-          selRect = { startX: x, startY: y, endX: x, endY: y };
-          selectedShapes = [];
+
+      // Update cursor based on whether we're hovering over a shape
+      if (currentMode !== 'write') {
+        const hoverShape = getShapeAt(x, y);
+        canvas.style.cursor = hoverShape ? 'pointer' : 'default';
+      }
+      
+      if (draggingSelected && selectedShapes.length > 0) {
+        // Handle shape dragging
+        const dx = x - selectionDragStart.x;
+        const dy = y - selectionDragStart.y;
+        
+        selectedShapes.forEach(s => {
+          if (s.type === 'square' || s.type === 'circle') {
+            s.x = s.initialX + dx;
+            s.y = s.initialY + dy;
+          } else if (s.type === 'arrow') {
+            s.startX = s.initialStartX + dx;
+            s.startY = s.initialStartY + dy;
+            s.endX = s.initialEndX + dx;
+            s.endY = s.initialEndY + dy;
+          } else if (s.type === 'draw') {
+            s.points = s.initialPoints.map(p => ({
+              x: p.x + dx,
+              y: p.y + dy
+            }));
+          }
+        });
+        render();
+        return;
+      }
+      
+      if (currentMode === 'draw' && isDrawing) {
+        const lastPoint = currentShape.points[currentShape.points.length - 1];
+        currentShape.points.push({x, y});
+        
+        ctx.beginPath();
+        ctx.moveTo(lastPoint.x, lastPoint.y);
+        ctx.lineTo(x, y);
+        ctx.stroke();
+      } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') && isDrawing) {
+        previewShape = { type: currentMode, startX, startY, endX: x, endY: y };
+        render();
+        drawPreview(previewShape);
+      } else if (currentMode === 'select' && selRect) {
+        // Update selection rectangle and find shapes within it
+        selRect.endX = x;
+        selRect.endY = y;
+        render();
+        drawSelectionRectangle(selRect);
+        
+        // Calculate selection bounds
+        const left = Math.min(selRect.startX, selRect.endX);
+        const right = Math.max(selRect.startX, selRect.endX);
+        const top = Math.min(selRect.startY, selRect.endY);
+        const bottom = Math.max(selRect.startY, selRect.endY);
+        
+        // Select shapes that intersect with the selection rectangle
+        selectedShapes = shapes.filter(shape => {
+          const box = getShapeBoundingBox(shape);
+          // Check if the boxes overlap
+          return !(box.left > right || 
+                  box.right < left || 
+                  box.top > bottom || 
+                  box.bottom < top);
+        });
+        
+        if (selectedShapes.length > 0) {
+          drawSelectedHighlights();
         }
       }
     });
 
-    canvas.addEventListener('mousemove', (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const x = e.clientX - rect.left;
-  const y = e.clientY - rect.top;
-  
-  if (currentMode === 'draw' && isDrawing) {
-    const lastPoint = currentShape.points[currentShape.points.length - 1];
-    currentShape.points.push({x, y});
-    
-    // Just draw the new line segment
-    ctx.beginPath();
-    ctx.moveTo(lastPoint.x, lastPoint.y);
-    ctx.lineTo(x, y);
-    ctx.stroke();
-  } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') && isDrawing) {
-    previewShape = { type: currentMode, startX, startY, endX: x, endY: y };
-    render();
-    drawPreview(previewShape);
-  } else if (currentMode === 'select') {
-    if (draggingSelected && selectedShapes.length > 0) {
-      let dx = x - selectionDragStart.x;
-      let dy = y - selectionDragStart.y;
-      selectedShapes.forEach(s => {
-        if (s.type === 'square' || s.type === 'circle' || s.type === 'arrow') {
-          s.x = s.initialX + dx;
-          s.y = s.initialY + dy;
-          if (s.type === 'arrow') {
-            s.startX += dx;
-            s.startY += dy;
-            s.endX += dx;
-            s.endY += dy;
-          }
-        } else if (s.type === 'draw') {
-          s.points = s.initialPoints.map(p => ({ x: p.x + dx, y: p.y + dy }));
-        }
-      });
-      render();
-    } else if (selRect) {
-      selRect.endX = x;
-      selRect.endY = y;
-      render();
-    }
-  }
-});
+    canvas.addEventListener('mousedown', (e) => {
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
 
-canvas.addEventListener('mouseup', (e) => {
-  if (isDrawing) {
-    isDrawing = false;
-    if (currentMode === 'draw' && currentShape) {
-      shapes.push(currentShape);
-      currentShape = null;
-    } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') && previewShape) {
-      // Convert preview shape to final shape
-      if (currentMode === 'square') {
-        shapes.push({
-          type: 'square',
-          x: Math.min(previewShape.startX, previewShape.endX),
-          y: Math.min(previewShape.startY, previewShape.endY),
-          width: Math.abs(previewShape.endX - previewShape.startX),
-          height: Math.abs(previewShape.endY - previewShape.startY)
-        });
-      } else if (currentMode === 'circle') {
-        const radius = Math.hypot(previewShape.endX - previewShape.startX, 
-                                previewShape.endY - previewShape.startY);
-        shapes.push({
-          type: 'circle',
-          x: previewShape.startX,
-          y: previewShape.startY,
-          radius: radius
-        });
-      } else if (currentMode === 'arrow') {
-        shapes.push({
-          type: 'arrow',
-          startX: previewShape.startX,
-          startY: previewShape.startY,
-          endX: previewShape.endX,
-          endY: previewShape.endY
-        });
+      if (currentMode === 'write') {
+        return;
       }
-      previewShape = null;
-    }
-    saveState();
-    render();
-    saveShapes();
-  }
-});
+
+      // Check for shape selection in any non-write mode
+      const clickedShape = getShapeAt(x, y);
+      if (clickedShape && !isDrawing) {
+        // If we click a shape that's already selected, don't change selection
+        // If we click a shape that's not selected, select only that shape
+        if (!selectedShapes.includes(clickedShape)) {
+          selectedShapes = [clickedShape];
+        }
+        
+        draggingSelected = true;
+        selectionDragStart = { x, y };
+        
+        // Record initial positions for all selected shapes
+        selectedShapes.forEach(s => {
+          if (s.type === 'square' || s.type === 'circle') {
+            s.initialX = s.x;
+            s.initialY = s.y;
+          } else if (s.type === 'arrow') {
+            s.initialStartX = s.startX;
+            s.initialStartY = s.startY;
+            s.initialEndX = s.endX;
+            s.initialEndY = s.endY;
+          } else if (s.type === 'draw') {
+            s.initialPoints = s.points.map(p => ({ x: p.x, y: p.y }));
+          }
+        });
+        render();
+        drawSelectedHighlights(); // Add blue highlight immediately
+        return;
+      }
+      
+      if (currentMode === 'draw') {
+        isDrawing = true;
+        currentShape = { type: 'draw', points: [{x, y}] };
+      } else if (['square', 'circle', 'arrow'].includes(currentMode)) {
+        isDrawing = true;
+        startX = x;
+        startY = y;
+      } else if (currentMode === 'select' && !clickedShape) {
+        // Start selection rectangle only if we clicked empty space
+        selectedShapes = [];
+        selRect = { startX: x, startY: y, endX: x, endY: y };
+      }
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+      if (draggingSelected) {
+        draggingSelected = false;
+        saveState();
+        saveShapes();
+      }
+      
+      if (isDrawing) {
+        isDrawing = false;
+        if (currentMode === 'draw' && currentShape) {
+          shapes.push(currentShape);
+          currentShape = null;
+        } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') && previewShape) {
+          // Convert preview shape to final shape
+          if (currentMode === 'square') {
+            shapes.push({
+              type: 'square',
+              x: Math.min(previewShape.startX, previewShape.endX),
+              y: Math.min(previewShape.startY, previewShape.endY),
+              width: Math.abs(previewShape.endX - previewShape.startX),
+              height: Math.abs(previewShape.endY - previewShape.startY)
+            });
+          } else if (currentMode === 'circle') {
+            const radius = Math.hypot(previewShape.endX - previewShape.startX, 
+                                    previewShape.endY - previewShape.startY);
+            shapes.push({
+              type: 'circle',
+              x: previewShape.startX,
+              y: previewShape.startY,
+              radius: radius
+            });
+          } else if (currentMode === 'arrow') {
+            shapes.push({
+              type: 'arrow',
+              startX: previewShape.startX,
+              startY: previewShape.startY,
+              endX: previewShape.endX,
+              endY: previewShape.endY
+            });
+          }
+          previewShape = null;
+        }
+        saveState();
+        render();
+        saveShapes();
+      }
+      
+      // Clear selection rectangle if it exists
+      if (selRect) {
+        selRect = null;
+        render();
+      }
+    });
 
     /************ Keyboard Events for Undo/Redo ************/
     // Add these variables at the top with your other state variables
@@ -519,7 +588,25 @@ function showTextEditor(shape) {
   });
 }
 
-// Make sure the render function properly handles text rendering
+function wrapText(ctx, text, maxWidth) {
+  const words = text.split(' ');
+  const lines = [];
+  let currentLine = words[0];
+
+  for (let i = 1; i < words.length; i++) {
+    const word = words[i];
+    const width = ctx.measureText(currentLine + " " + word).width;
+    if (width < maxWidth) {
+      currentLine += " " + word;
+    } else {
+      lines.push(currentLine);
+      currentLine = word;
+    }
+  }
+  lines.push(currentLine);
+  return lines;
+}
+
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   shapes.forEach(shape => {
@@ -539,14 +626,27 @@ function render() {
     }
     ctx.stroke();
 
-    // Render text if it exists
+    // Render text if it exists with wrapping
     if (shape.text) {
       ctx.save();
       ctx.font = "14px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
+      
       let box = getShapeBoundingBox(shape);
-      ctx.fillText(shape.text, box.x + box.width / 2, box.y + box.height / 2);
+      const maxWidth = shape.type === 'circle' ? shape.radius * 1.8 : box.width - 10;
+      const lines = wrapText(ctx, shape.text, maxWidth);
+      
+      const lineHeight = 18;
+      const totalHeight = lines.length * lineHeight;
+      const startY = box.y + (box.height - totalHeight) / 2;
+      
+      lines.forEach((line, index) => {
+        ctx.fillText(line, 
+          box.x + box.width / 2, 
+          startY + lineHeight * index + lineHeight / 2);
+      });
+      
       ctx.restore();
     }
   });
@@ -657,16 +757,18 @@ function render() {
     }
 
     function drawSelectedHighlights() {
+      ctx.save();
+      ctx.setLineDash([5, 3]);
+      ctx.strokeStyle = 'blue';
+      
       selectedShapes.forEach(s => {
-        let box = getShapeBoundingBox(s);
-        ctx.save();
-        ctx.setLineDash([5, 3]);
-        ctx.strokeStyle = 'blue';
+        const box = getShapeBoundingBox(s);
         ctx.beginPath();
         ctx.rect(box.x, box.y, box.width, box.height);
         ctx.stroke();
-        ctx.restore();
       });
+      
+      ctx.restore();
     }
 
     /************ IndexedDB Persistence for Shapes ************/
