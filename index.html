@@ -5,6 +5,7 @@
   <title>Scratchpad</title>
   <!-- CodeMirror CSS -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/codemirror.min.css">
+  
   <style>
     html, body {
       margin: 0;
@@ -60,13 +61,14 @@
     <button id="mode-circle" data-mode="circle" title="Draw Circle">◯</button>
     <button id="mode-arrow" data-mode="arrow" title="Draw Arrow">➜</button>
     <button id="mode-select" data-mode="select" title="Select/Move/Delete Shapes">⬚</button>
+    <button id="screenshot" title="Download as Image">↧</button>
     <button id="mode-delete" data-mode="delete" title="Delete All">✖</button>
   </div>
 
   <!-- Editor container for CodeMirror -->
   <div id="editor-container">
     <textarea id="code" name="code">
-<!-- Start typing your code here -->
+<!-- Write or sketch your ideas here -->
     </textarea>
   </div>
 
@@ -78,6 +80,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/css/css.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/htmlmixed/htmlmixed.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.5/mode/markdown/markdown.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
   <script>
     /************ CodeMirror Setup with LocalStorage Persistence ************/
@@ -189,29 +192,47 @@
 
     // Returns the topmost shape under (x, y)
     function getShapeAt(x, y) {
+      // Border detection threshold in pixels
+      const BORDER_THRESHOLD = 5;
+      
       for (let i = shapes.length - 1; i >= 0; i--) {
         const shape = shapes[i];
         if (shape.type === 'square') {
-          if (x >= shape.x && x <= shape.x + shape.width &&
-              y >= shape.y && y <= shape.y + shape.height) {
+          // Check if point is near any of the four edges of the rectangle
+          const nearLeftEdge = Math.abs(x - shape.x) <= BORDER_THRESHOLD && 
+                              y >= shape.y && y <= shape.y + shape.height;
+          const nearRightEdge = Math.abs(x - (shape.x + shape.width)) <= BORDER_THRESHOLD && 
+                               y >= shape.y && y <= shape.y + shape.height;
+          const nearTopEdge = Math.abs(y - shape.y) <= BORDER_THRESHOLD && 
+                             x >= shape.x && x <= shape.x + shape.width;
+          const nearBottomEdge = Math.abs(y - (shape.y + shape.height)) <= BORDER_THRESHOLD && 
+                                x >= shape.x && x <= shape.x + shape.width;
+          
+          if (nearLeftEdge || nearRightEdge || nearTopEdge || nearBottomEdge) {
             return shape;
           }
         } else if (shape.type === 'circle') {
+          // For circle, check if point is near the circumference
           const dist = Math.hypot(x - shape.x, y - shape.y);
-          if (dist <= shape.radius) {
+          if (Math.abs(dist - shape.radius) <= BORDER_THRESHOLD) {
             return shape;
           }
         } else if (shape.type === 'draw') {
-          const xs = shape.points.map(p => p.x);
-          const ys = shape.points.map(p => p.y);
-          const minX = Math.min(...xs), maxX = Math.max(...xs);
-          const minY = Math.min(...ys), maxY = Math.max(...ys);
-          if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
-            return shape;
+          // For freehand drawing, check if point is near any segment of the path
+          for (let j = 1; j < shape.points.length; j++) {
+            const p1 = shape.points[j-1];
+            const p2 = shape.points[j];
+            const dist = distanceToLine({x, y}, p1, p2);
+            if (dist <= BORDER_THRESHOLD) {
+              return shape;
+            }
           }
         } else if (shape.type === 'arrow') {
+          // For arrow, check if point is near the line
           const dist = distanceToLine({x, y}, {x: shape.startX, y: shape.startY}, {x: shape.endX, y: shape.endY});
-          if (dist < 5) return shape;
+          if (dist <= BORDER_THRESHOLD) {
+            return shape;
+          }
         }
       }
       return null;
@@ -233,10 +254,16 @@
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
-      // Update cursor based on whether we're hovering over a shape
+      // Update cursor based on whether we're hovering over a shape's border
       if (currentMode !== 'write') {
         const hoverShape = getShapeAt(x, y);
-        canvas.style.cursor = hoverShape ? 'pointer' : 'default';
+        if (hoverShape) {
+          // Use a move cursor when hovering over a shape's border
+          canvas.style.cursor = 'move';
+        } else {
+          // Use default cursor otherwise
+          canvas.style.cursor = 'default';
+        }
       }
       
       if (draggingSelected && selectedShapes.length > 0) {
@@ -463,11 +490,15 @@ document.addEventListener('keydown', (e) => {
 
     /************ Keyboard Events for Deletion ************/
     window.addEventListener("keydown", (e) => {
-      if (currentMode === "select" && (e.key === "Delete" || e.key === "Backspace")) {
-        shapes = shapes.filter(s => !selectedShapes.includes(s));
-        selectedShapes = [];
-        saveShapes();
-        render();
+      if ((e.key === "Delete" || e.key === "Backspace") && selectedShapes.length > 0) {
+        // Only delete shapes if we're not in write mode (to avoid interfering with text editing)
+        if (currentMode !== "write") {
+          shapes = shapes.filter(s => !selectedShapes.includes(s));
+          selectedShapes = [];
+          saveState(); // Save state for undo/redo
+          saveShapes();
+          render();
+        }
       }
     });
 
@@ -509,7 +540,58 @@ document.getElementById('mode-delete').addEventListener('click', () => {
     saveShapes();
   }
 });
+/******************* SCREENSHOT FUNCTIONALITY *******************/
 
+// Screenshot functionality
+document.getElementById('screenshot').addEventListener('click', function() {
+  console.log('screenshot button clicked');
+  
+  // Create a temporary canvas to combine everything
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+  
+  // Set the canvas size to match the CodeMirror wrapper
+  tempCanvas.width = codeMirrorWrapper.clientWidth;
+  tempCanvas.height = codeMirrorWrapper.clientHeight;
+  
+  // First draw a white background
+  tempCtx.fillStyle = 'white';
+  tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+  
+  // Then try to capture the CodeMirror content
+  try {
+    // Use html2canvas to capture the CodeMirror content
+    html2canvas(codeMirrorWrapper, {
+      backgroundColor: null,
+      scale: 1,
+      logging: true,
+      ignoreElements: (element) => element.id === 'overlayCanvas'
+    }).then(function(editorCanvas) {
+      // Draw the editor content
+      tempCtx.drawImage(editorCanvas, 0, 0);
+      
+      // Then draw the canvas content (drawings) on top
+      tempCtx.drawImage(canvas, 0, 0);
+      
+      // Get the image data
+      const imageData = tempCanvas.toDataURL('image/png');
+      
+      // Send the image data to the parent window
+      window.parent.postMessage({ type: 'download-screenshot', imageData }, '*');
+    });
+  } catch (error) {
+    console.error('Error capturing editor:', error);
+    
+    // Fallback: just draw the canvas content
+    tempCtx.drawImage(canvas, 0, 0);
+    
+    // Get the image data
+    const imageData = tempCanvas.toDataURL('image/png');
+    
+    // Send the image data to the parent window
+    window.parent.postMessage({ type: 'download-screenshot', imageData }, '*');
+  }
+});
 
     /************ Double Click for Text Editing on Shapes ************/
     canvas.addEventListener("dblclick", (e) => {
@@ -626,6 +708,19 @@ function render() {
     }
     ctx.stroke();
 
+    // Draw arrow heads if it's an arrow
+    if (shape.type === 'arrow') {
+      const angle = Math.atan2(shape.endY - shape.startY, shape.endX - shape.startX);
+      const headLength = 10;
+      const arrowAngle = Math.PI / 6;
+      ctx.beginPath();
+      ctx.moveTo(shape.endX, shape.endY);
+      ctx.lineTo(shape.endX - headLength * Math.cos(angle - arrowAngle), shape.endY - headLength * Math.sin(angle - arrowAngle));
+      ctx.moveTo(shape.endX, shape.endY);
+      ctx.lineTo(shape.endX - headLength * Math.cos(angle + arrowAngle), shape.endY - headLength * Math.sin(angle + arrowAngle));
+      ctx.stroke();
+    }
+
     // Render text if it exists with wrapping
     if (shape.text) {
       ctx.save();
@@ -660,58 +755,13 @@ function render() {
       drawSelectedHighlights();
     }
   }
+  // Draw selection highlights in any mode except 'write'
+  else if (currentMode !== 'write' && selectedShapes.length > 0) {
+    drawSelectedHighlights();
+  }
 }
 
     /************ Drawing and Preview Rendering ************/
-    function render() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      shapes.forEach(shape => {
-        ctx.beginPath();
-        if (shape.type === 'square') {
-          ctx.rect(shape.x, shape.y, shape.width, shape.height);
-        } else if (shape.type === 'circle') {
-          ctx.arc(shape.x, shape.y, shape.radius, 0, Math.PI * 2);
-        } else if (shape.type === 'draw') {
-          ctx.moveTo(shape.points[0].x, shape.points[0].y);
-          for (let i = 1; i < shape.points.length; i++) {
-            ctx.lineTo(shape.points[i].x, shape.points[i].y);
-          }
-        } else if (shape.type === 'arrow') {
-          ctx.moveTo(shape.startX, shape.startY);
-          ctx.lineTo(shape.endX, shape.endY);
-        }
-        ctx.stroke();
-        if (shape.text) {
-          ctx.save();
-          ctx.font = "14px sans-serif";
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          let box = getShapeBoundingBox(shape);
-          ctx.fillText(shape.text, box.x + box.width / 2, box.y + box.height / 2);
-          ctx.restore();
-        }
-        if (shape.type === 'arrow') {
-          const angle = Math.atan2(shape.endY - shape.startY, shape.endX - shape.startX);
-          const headLength = 10;
-          const arrowAngle = Math.PI / 6;
-          ctx.beginPath();
-          ctx.moveTo(shape.endX, shape.endY);
-          ctx.lineTo(shape.endX - headLength * Math.cos(angle - arrowAngle), shape.endY - headLength * Math.sin(angle - arrowAngle));
-          ctx.moveTo(shape.endX, shape.endY);
-          ctx.lineTo(shape.endX - headLength * Math.cos(angle + arrowAngle), shape.endY - headLength * Math.sin(angle + arrowAngle));
-          ctx.stroke();
-        }
-      });
-      if (currentMode === 'select') {
-        if (selRect) {
-          drawSelectionRectangle(selRect);
-        }
-        if (selectedShapes.length > 0) {
-          drawSelectedHighlights();
-        }
-      }
-    }
-
     function drawPreview(preview) {
       if (!preview) return;
       ctx.save();
@@ -760,11 +810,36 @@ function render() {
       ctx.save();
       ctx.setLineDash([5, 3]);
       ctx.strokeStyle = 'blue';
+      ctx.lineWidth = 2; // Make the highlight a bit thicker
       
       selectedShapes.forEach(s => {
-        const box = getShapeBoundingBox(s);
         ctx.beginPath();
-        ctx.rect(box.x, box.y, box.width, box.height);
+        if (s.type === 'square') {
+          // Draw the rectangle border
+          ctx.rect(s.x, s.y, s.width, s.height);
+        } else if (s.type === 'circle') {
+          // Draw the circle border
+          ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
+        } else if (s.type === 'draw') {
+          // Draw the freehand path
+          ctx.moveTo(s.points[0].x, s.points[0].y);
+          for (let i = 1; i < s.points.length; i++) {
+            ctx.lineTo(s.points[i].x, s.points[i].y);
+          }
+        } else if (s.type === 'arrow') {
+          // Draw the arrow line
+          ctx.moveTo(s.startX, s.startY);
+          ctx.lineTo(s.endX, s.endY);
+          
+          // Draw the arrow head
+          const angle = Math.atan2(s.endY - s.startY, s.endX - s.startX);
+          const headLength = 10;
+          const arrowAngle = Math.PI / 6;
+          ctx.moveTo(s.endX, s.endY);
+          ctx.lineTo(s.endX - headLength * Math.cos(angle - arrowAngle), s.endY - headLength * Math.sin(angle - arrowAngle));
+          ctx.moveTo(s.endX, s.endY);
+          ctx.lineTo(s.endX - headLength * Math.cos(angle + arrowAngle), s.endY - headLength * Math.sin(angle + arrowAngle));
+        }
         ctx.stroke();
       });
       
