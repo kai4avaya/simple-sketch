@@ -155,6 +155,7 @@
     <button id="screenshot" title="Download as Image">↧</button>
     <button id="save-drawing" title="Save Current Drawing">⊞</button>
     <button id="history" title="View Saved Drawings">☰</button>
+    <button id="code-view" title="View/Edit Drawing Data">{ }</button>
     <button id="mode-delete" data-mode="delete" title="Delete All">✖</button>
   </div>
 
@@ -167,6 +168,26 @@
       </div>
       <div id="drawings-container" class="drawing-grid">
         <!-- Drawing entries will be added here -->
+      </div>
+    </div>
+  </div>
+  
+  <!-- Modal for JSON code view/edit -->
+  <div id="code-modal" class="modal">
+    <div class="modal-content" style="max-width: 700px;">
+      <div class="modal-header">
+        <h2>Drawing Data</h2>
+        <span class="close">&times;</span>
+      </div>
+      <div style="margin-bottom: 10px; font-size: 14px; color: #555;">
+        <p>This is the JSON representation of your current drawing. You can view, edit, or replace it with new data.</p>
+        <p>To apply changes, click the "Apply Changes" button. <strong>Note:</strong> Each shape needs a "type" property (square, circle, arrow, line, or draw).</p>
+      </div>
+      <div id="code-editor-container" style="height: 300px; border: 1px solid #ddd;">
+        <!-- Code editor will be inserted here -->
+      </div>
+      <div style="margin-top: 15px; text-align: right;">
+        <button id="apply-code">Apply Changes</button>
       </div>
     </div>
   </div>
@@ -1281,6 +1302,9 @@ function render() {
       if (e.target === historyModal) {
         historyModal.style.display = 'none';
       }
+      if (e.target === codeModal) {
+        codeModal.style.display = 'none';
+      }
     });
     
     // Function to load saved drawings from IndexedDB
@@ -1388,6 +1412,107 @@ function render() {
         loadSavedDrawings();
       }
     }
+
+    // Code view modal functionality
+    const codeViewBtn = document.getElementById('code-view');
+    const codeModal = document.getElementById('code-modal');
+    const codeCloseBtn = codeModal.querySelector('.close');
+    const applyCodeBtn = document.getElementById('apply-code');
+    let codeEditor;
+    
+    // Initialize CodeMirror for code view
+    function initCodeEditor() {
+      if (!codeEditor) {
+        const codeEditorContainer = document.getElementById('code-editor-container');
+        const textarea = document.createElement('textarea');
+        codeEditorContainer.appendChild(textarea);
+        
+        codeEditor = CodeMirror.fromTextArea(textarea, {
+          mode: "application/json",
+          lineNumbers: true,
+          matchBrackets: true,
+          autoCloseBrackets: true,
+          theme: "default",
+          lineWrapping: true,
+          tabSize: 2,
+          gutters: ["CodeMirror-linenumbers", "CodeMirror-lint-markers"],
+          lint: true
+        });
+      }
+    }
+    
+    // Show modal when code view button is clicked
+    codeViewBtn.addEventListener('click', () => {
+      initCodeEditor();
+      
+      // Get current drawing data from IndexedDB
+      const transaction = db.transaction("shapes", "readonly");
+      const store = transaction.objectStore("shapes");
+      const request = store.getAll();
+      
+      request.onsuccess = function(event) {
+        const currentShapes = event.target.result;
+        
+        // Format and display as JSON
+        const formattedJson = JSON.stringify(currentShapes, null, 2);
+        codeEditor.setValue(formattedJson);
+        
+        // Show modal
+        codeModal.style.display = 'block';
+        
+        // Refresh CodeMirror to ensure proper rendering after display
+        setTimeout(() => codeEditor.refresh(), 10);
+      };
+    });
+    
+    // Close modal when X is clicked
+    codeCloseBtn.addEventListener('click', () => {
+      codeModal.style.display = 'none';
+    });
+    
+    // Apply changes button
+    applyCodeBtn.addEventListener('click', () => {
+      try {
+        // Parse the JSON from the editor
+        const jsonData = JSON.parse(codeEditor.getValue());
+        
+        if (!Array.isArray(jsonData)) {
+          throw new Error("Data must be an array of shapes");
+        }
+        
+        // Check if it has valid shape objects
+        for (const shape of jsonData) {
+          if (!shape.type) {
+            throw new Error("Each shape must have a 'type' property");
+          }
+        }
+        
+        // Apply the changes
+        shapes = jsonData;
+        
+        // Clear current DB store
+        const transaction = db.transaction("shapes", "readwrite");
+        const store = transaction.objectStore("shapes");
+        store.clear().onsuccess = function() {
+          // Add new shapes to DB
+          shapes.forEach(shape => {
+            // Remove any existing ID to avoid conflicts
+            delete shape.id;
+            store.add(shape);
+          });
+          
+          // Reset undo/redo stacks
+          undoStack = [];
+          redoStack = [];
+          
+          // Render and close modal
+          render();
+          codeModal.style.display = 'none';
+        };
+      } catch (error) {
+        alert("Error parsing JSON: " + error.message);
+      }
+    });
   </script>
 </body>
 </html>
