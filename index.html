@@ -49,6 +49,93 @@
       z-index: 10;
       pointer-events: none; /* toggled in JS based on mode */
     }
+    
+    /* Modal dialog styles */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1000;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      background-color: rgba(0,0,0,0.4);
+    }
+    
+    .modal-content {
+      background-color: #fefefe;
+      margin: 10% auto;
+      padding: 20px;
+      border: 1px solid #888;
+      width: 80%;
+      max-height: 70vh;
+      overflow-y: auto;
+      border-radius: 5px;
+      box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #ddd;
+      padding-bottom: 10px;
+      margin-bottom: 15px;
+    }
+    
+    .modal-header h2 {
+      margin: 0;
+    }
+    
+    .close {
+      color: #aaa;
+      font-size: 28px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    
+    .close:hover {
+      color: black;
+    }
+    
+    .drawing-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 15px;
+    }
+    
+    .drawing-item {
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 10px;
+      text-align: center;
+      position: relative;
+    }
+    
+    .drawing-preview {
+      width: 100%;
+      height: 120px;
+      object-fit: contain;
+      background-color: #f9f9f9;
+      margin-bottom: 8px;
+    }
+    
+    .drawing-controls {
+      display: flex;
+      justify-content: space-around;
+      margin-top: 8px;
+    }
+    
+    .drawing-controls button {
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+    
+    .no-drawings {
+      text-align: center;
+      padding: 20px;
+      color: #666;
+    }
   </style>
 </head>
 <body>
@@ -63,9 +150,24 @@
     <button id="mode-select" data-mode="select" title="Select/Move/Delete Shapes">⬚</button>
     <button id="mode-erase" data-mode="erase" title="Erase Shapes">⌫</button>
     <button id="screenshot" title="Download as Image">↧</button>
+    <button id="save-drawing" title="Save Current Drawing">💾</button>
+    <button id="history" title="View Saved Drawings">🕒</button>
     <button id="mode-delete" data-mode="delete" title="Delete All">✖</button>
   </div>
 
+  <!-- Modal for saved drawings history -->
+  <div id="history-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>Saved Drawings</h2>
+        <span class="close">&times;</span>
+      </div>
+      <div id="drawings-container" class="drawing-grid">
+        <!-- Drawing entries will be added here -->
+      </div>
+    </div>
+  </div>
+  
   <!-- Editor container for CodeMirror -->
   <div id="editor-container">
     <textarea id="code" name="code">
@@ -583,41 +685,68 @@ document.addEventListener('keydown', (e) => {
     /************* Delete ********************************************/
     // Add this click handler for the delete all button
 document.getElementById('mode-delete').addEventListener('click', () => {
-  if (confirm('Are you sure you want to delete everything? This cannot be undone.')) {
-    // Clear the canvas
-    shapes = [];
-    selectedShapes = [];
-    currentShape = null;
-    isDrawing = false;
-    previewShape = null;
-    selRect = null;
-    
-    // Clear the CodeMirror editor
-    editor.setValue('');
-    
-    // Clear the localStorage
-    localStorage.removeItem("codemirror-text");
-    
-    // Clear and reset IndexedDB shapes
-    if (db) {
-      const transaction = db.transaction("shapes", "readwrite");
-      const store = transaction.objectStore("shapes");
-      store.clear().onsuccess = function() {
-        console.log("Database cleared");
-      };
-    }
-    
-    // Reset undo/redo stacks
-    undoStack = [];
-    redoStack = [];
-    
-    // Render the empty canvas
-    render();
-    
-    // Save the empty state
-    saveShapes();
+  if (confirm('Do you want to save the current drawing before clearing?')) {
+    // Save current drawing to savedDrawings store
+    saveCurrentDrawingToHistory("Drawing " + new Date().toLocaleString());
   }
+  
+  // Clear the canvas
+  shapes = [];
+  selectedShapes = [];
+  currentShape = null;
+  isDrawing = false;
+  previewShape = null;
+  selRect = null;
+  
+  // Clear the CodeMirror editor
+  editor.setValue('');
+  
+  // Clear the localStorage
+  localStorage.removeItem("codemirror-text");
+  
+  // Clear and reset IndexedDB shapes
+  if (db) {
+    const transaction = db.transaction("shapes", "readwrite");
+    const store = transaction.objectStore("shapes");
+    store.clear().onsuccess = function() {
+      console.log("Current drawing cleared");
+    };
+  }
+  
+  // Reset undo/redo stacks
+  undoStack = [];
+  redoStack = [];
+  
+  // Render the empty canvas
+  render();
 });
+
+// Function to save current drawing to history
+function saveCurrentDrawingToHistory(name) {
+  if (!db || shapes.length === 0) return; // Don't save empty drawings
+  
+  const transaction = db.transaction("shapes", "readonly");
+  const store = transaction.objectStore("shapes");
+  const request = store.getAll();
+  
+  request.onsuccess = function(event) {
+    const currentShapes = event.target.result;
+    
+    // Create a saved drawing entry with timestamp
+    const savedDrawing = {
+      name: name,
+      shapes: JSON.parse(JSON.stringify(currentShapes)), // Deep copy
+      timestamp: new Date().getTime(),
+      preview: canvas.toDataURL('image/png', 0.5) // Store a preview image
+    };
+    
+    // Save to savedDrawings store
+    const saveTransaction = db.transaction("savedDrawings", "readwrite");
+    const saveStore = saveTransaction.objectStore("savedDrawings");
+    saveStore.add(savedDrawing);
+  };
+}
+
 /******************* SCREENSHOT FUNCTIONALITY *******************/
 
 // Screenshot functionality
@@ -949,10 +1078,18 @@ function render() {
     let db;
     function openDB() {
       return new Promise((resolve, reject) => {
-        const request = indexedDB.open("ScratchpadDB", 1);
+        const request = indexedDB.open("ScratchpadDB", 2); // Version 2 for new store
         request.onupgradeneeded = function(event) {
           db = event.target.result;
-          db.createObjectStore("shapes", { keyPath: "id", autoIncrement: true });
+          if (!db.objectStoreNames.contains("shapes")) {
+            db.createObjectStore("shapes", { keyPath: "id", autoIncrement: true });
+          }
+          // Create savedDrawings store if it doesn't exist
+          if (!db.objectStoreNames.contains("savedDrawings")) {
+            const savedDrawingsStore = db.createObjectStore("savedDrawings", { keyPath: "id", autoIncrement: true });
+            // Add a timestamp index for sorting
+            savedDrawingsStore.createIndex("timestamp", "timestamp", { unique: false });
+          }
         };
         request.onsuccess = function(event) {
           db = event.target.result;
@@ -1099,6 +1236,142 @@ function render() {
         saveState(); // Save state for undo
         saveShapes(); // Update storage
         render();
+      }
+    }
+
+    // Get the history button and modal
+    const historyBtn = document.getElementById('history');
+    const historyModal = document.getElementById('history-modal');
+    const closeBtn = historyModal.querySelector('.close');
+    const drawingsContainer = document.getElementById('drawings-container');
+    const saveDrawingBtn = document.getElementById('save-drawing');
+    
+    // Save current drawing when save button is clicked
+    saveDrawingBtn.addEventListener('click', () => {
+      saveCurrentDrawing();
+    });
+    
+    // Show modal when history button is clicked
+    historyBtn.addEventListener('click', () => {
+      loadSavedDrawings();
+      historyModal.style.display = 'block';
+    });
+    
+    // Close modal when X is clicked
+    closeBtn.addEventListener('click', () => {
+      historyModal.style.display = 'none';
+    });
+    
+    // Close modal when clicking outside the content
+    window.addEventListener('click', (e) => {
+      if (e.target === historyModal) {
+        historyModal.style.display = 'none';
+      }
+    });
+    
+    // Function to load saved drawings from IndexedDB
+    function loadSavedDrawings() {
+      if (!db) return;
+      
+      const transaction = db.transaction("savedDrawings", "readonly");
+      const store = transaction.objectStore("savedDrawings");
+      const index = store.index("timestamp");
+      
+      // Get all saved drawings sorted by timestamp (newest first)
+      const request = index.openCursor(null, "prev");
+      
+      // Clear container
+      drawingsContainer.innerHTML = '';
+      let hasDrawings = false;
+      
+      request.onsuccess = function(event) {
+        const cursor = event.target.result;
+        if (cursor) {
+          hasDrawings = true;
+          const drawing = cursor.value;
+          
+          // Create drawing item element
+          const drawingItem = document.createElement('div');
+          drawingItem.className = 'drawing-item';
+          drawingItem.innerHTML = `
+            <img class="drawing-preview" src="${drawing.preview}" alt="Drawing Preview">
+            <div class="drawing-name">${drawing.name}</div>
+            <div class="drawing-controls">
+              <button class="load-btn">Load</button>
+              <button class="delete-btn">Delete</button>
+            </div>
+          `;
+          
+          // Set up load button
+          drawingItem.querySelector('.load-btn').addEventListener('click', () => {
+            loadDrawing(drawing);
+            historyModal.style.display = 'none';
+          });
+          
+          // Set up delete button
+          drawingItem.querySelector('.delete-btn').addEventListener('click', () => {
+            if (confirm(`Delete "${drawing.name}"?`)) {
+              deleteDrawing(drawing.id);
+              drawingItem.remove();
+              
+              // Check if container is empty after deletion
+              if (drawingsContainer.children.length === 0) {
+                drawingsContainer.innerHTML = '<div class="no-drawings">No saved drawings</div>';
+              }
+            }
+          });
+          
+          drawingsContainer.appendChild(drawingItem);
+          cursor.continue();
+        } else if (!hasDrawings) {
+          // Display message if no drawings
+          drawingsContainer.innerHTML = '<div class="no-drawings">No saved drawings</div>';
+        }
+      };
+    }
+    
+    // Function to load a drawing into the canvas
+    function loadDrawing(drawing) {
+      // Clear current drawing
+      shapes = [];
+      
+      // Load shapes from saved drawing
+      shapes = JSON.parse(JSON.stringify(drawing.shapes));
+      
+      // Clear current DB store
+      const transaction = db.transaction("shapes", "readwrite");
+      const store = transaction.objectStore("shapes");
+      store.clear().onsuccess = function() {
+        // Add shapes to DB
+        shapes.forEach(shape => {
+          // Remove any existing ID to avoid conflicts
+          delete shape.id;
+          store.add(shape);
+        });
+        
+        // Reset undo/redo stacks
+        undoStack = [];
+        redoStack = [];
+        
+        // Render
+        render();
+      };
+    }
+    
+    // Function to delete a drawing from history
+    function deleteDrawing(id) {
+      const transaction = db.transaction("savedDrawings", "readwrite");
+      const store = transaction.objectStore("savedDrawings");
+      store.delete(id);
+    }
+    
+    // Save drawing button in the modal
+    function saveCurrentDrawing() {
+      const name = prompt("Enter a name for this drawing", "Drawing " + new Date().toLocaleString());
+      if (name) {
+        saveCurrentDrawingToHistory(name);
+        // Reload drawings list
+        loadSavedDrawings();
       }
     }
   </script>
