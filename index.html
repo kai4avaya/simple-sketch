@@ -61,6 +61,7 @@
     <button id="mode-circle" data-mode="circle" title="Draw Circle">◯</button>
     <button id="mode-arrow" data-mode="arrow" title="Draw Arrow">➜</button>
     <button id="mode-select" data-mode="select" title="Select/Move/Delete Shapes">⬚</button>
+    <button id="mode-erase" data-mode="erase" title="Erase Shapes">⌫</button>
     <button id="screenshot" title="Download as Image">↧</button>
     <button id="mode-delete" data-mode="delete" title="Delete All">✖</button>
   </div>
@@ -104,12 +105,13 @@
     });
 
     /************ Shapes and Canvas Setup ************/
-    let currentMode = 'write'; // Modes: write, draw, square, circle, arrow, select
+    let currentMode = 'write'; // Modes: write, draw, square, circle, arrow, select, erase
     let shapes = [];           // Array to hold drawn shapes (each may have a .text property)
     let currentShape = null;   // For freehand drawing (draw mode)
     let isDrawing = false;     // True when drawing is in progress
     let startX, startY;        // Starting coordinates for shape modes
     let previewShape = null;   // For previewing shapes during drag
+    let eraserRadius = 10;     // Size of the eraser tool in pixels
 
     // For selection mode:
     let selectedShapes = [];      // Currently selected shapes
@@ -147,6 +149,12 @@
         updateCanvasPointer();
         document.querySelectorAll('#toolbar button').forEach(b => b.style.background = '');
         btn.style.background = '#bbb';
+        
+        // Show tooltip for text editing when select mode is activated
+        if (currentMode === 'select') {
+          showTooltip("Tip: Double-click any shape to add text");
+        }
+        
         if (currentMode !== 'select') {
           selectedShapes = [];
           selRect = null;
@@ -157,6 +165,43 @@
         }
       });
     });
+
+    // Function to show temporary tooltip
+    function showTooltip(message) {
+      // Check if tooltip already exists
+      let tooltip = document.getElementById('canvas-tooltip');
+      if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.id = 'canvas-tooltip';
+        tooltip.style.position = 'fixed';
+        tooltip.style.top = '45px'; // Just below toolbar
+        tooltip.style.left = '50%';
+        tooltip.style.transform = 'translateX(-50%)';
+        tooltip.style.background = 'rgba(0, 0, 0, 0.7)';
+        tooltip.style.color = 'white';
+        tooltip.style.padding = '8px 12px';
+        tooltip.style.borderRadius = '4px';
+        tooltip.style.zIndex = '1000';
+        tooltip.style.fontSize = '14px';
+        tooltip.style.transition = 'opacity 0.3s';
+        document.body.appendChild(tooltip);
+      }
+      
+      // Set message and show tooltip
+      tooltip.textContent = message;
+      tooltip.style.opacity = '1';
+      
+      // Hide tooltip after delay
+      setTimeout(() => {
+        tooltip.style.opacity = '0';
+        // Remove from DOM after fade out
+        setTimeout(() => {
+          if (tooltip.parentNode) {
+            document.body.removeChild(tooltip);
+          }
+        }, 300);
+      }, 3000);
+    }
 
     /************ Utility Functions for Shapes ************/
     function getShapeBoundingBox(shape) {
@@ -254,6 +299,27 @@
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
+      // Handle eraser mode - show circular cursor and erase on drag
+      if (currentMode === 'erase') {
+        canvas.style.cursor = 'none'; // Hide default cursor
+        render(); // Re-render to clear previous eraser preview
+        
+        // Draw eraser cursor
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(x, y, eraserRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = 'red';
+        ctx.stroke();
+        ctx.restore();
+        
+        // If dragging, erase shapes
+        if (isDrawing) {
+          eraseShapesAt(x, y);
+        }
+        
+        return;
+      }
+
       // Update cursor based on whether we're hovering over a shape's border
       if (currentMode !== 'write') {
         const hoverShape = getShapeAt(x, y);
@@ -340,6 +406,13 @@
       if (currentMode === 'write') {
         return;
       }
+      
+      // In erase mode, start erasing shapes
+      if (currentMode === 'erase') {
+        isDrawing = true; // We use the isDrawing flag for continuity
+        eraseShapesAt(x, y);
+        return;
+      }
 
       // Check for shape selection in any non-write mode
       const clickedShape = getShapeAt(x, y);
@@ -409,12 +482,14 @@
               height: Math.abs(previewShape.endY - previewShape.startY)
             });
           } else if (currentMode === 'circle') {
+            const centerX = (previewShape.startX + previewShape.endX) / 2;
+            const centerY = (previewShape.startY + previewShape.endY) / 2;
             const radius = Math.hypot(previewShape.endX - previewShape.startX, 
-                                    previewShape.endY - previewShape.startY);
+                                    previewShape.endY - previewShape.startY) / 2;
             shapes.push({
               type: 'circle',
-              x: previewShape.startX,
-              y: previewShape.startY,
+              x: centerX,
+              y: centerY,
               radius: radius
             });
           } else if (currentMode === 'arrow') {
@@ -427,6 +502,9 @@
             });
           }
           previewShape = null;
+        } else if (currentMode === 'erase') {
+          // Finished erasing, render once more to remove eraser cursor
+          render();
         }
         saveState();
         render();
@@ -615,23 +693,26 @@ function showTextEditor(shape) {
   input.style.zIndex = 200;
   const centerX = box.x + box.width / 2;
   const centerY = box.y + box.height / 2;
-  let newWidth = Math.max(box.width, 50);
-  let newHeight = 20;
+  let newWidth = Math.max(box.width, 100); // Increased minimum width
+  let newHeight = 24; // Slightly larger height
   
-  // Style the input to be borderless and blend with the canvas
+  // Style the input to be more visible
   input.style.width = newWidth + "px";
   input.style.height = newHeight + "px";
   input.style.left = (centerX - newWidth / 2) + "px";
   input.style.top = (centerY - newHeight / 2) + "px";
   input.style.textAlign = "center";
   input.style.fontSize = "14px";
-  input.style.border = "none";
+  input.style.border = "1px solid #3498db"; // Blue border
   input.style.outline = "none";
-  input.style.background = "transparent";
-  input.style.padding = "0";
+  input.style.background = "rgba(255, 255, 255, 0.9)"; // Semi-transparent white
+  input.style.padding = "2px 5px";
+  input.style.borderRadius = "3px";
+  input.placeholder = "Type text here..."; // Placeholder text
   
   codeMirrorWrapper.appendChild(input);
   input.focus();
+  input.select(); // Select all text on focus
 
   // Real-time text update
   input.addEventListener("input", () => {
@@ -724,7 +805,7 @@ function render() {
     // Render text if it exists with wrapping
     if (shape.text) {
       ctx.save();
-      ctx.font = "14px sans-serif";
+      ctx.font = "bold 14px sans-serif"; // Make text bold
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       
@@ -736,10 +817,25 @@ function render() {
       const totalHeight = lines.length * lineHeight;
       const startY = box.y + (box.height - totalHeight) / 2;
       
+      // Draw text with white background for better readability
       lines.forEach((line, index) => {
+        const textY = startY + lineHeight * index + lineHeight / 2;
+        const textWidth = ctx.measureText(line).width;
+        
+        // Draw semi-transparent background
+        ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+        ctx.fillRect(
+          box.x + box.width / 2 - textWidth / 2 - 4,
+          textY - lineHeight / 2,
+          textWidth + 8,
+          lineHeight
+        );
+        
+        // Draw text
+        ctx.fillStyle = "#000";
         ctx.fillText(line, 
           box.x + box.width / 2, 
-          startY + lineHeight * index + lineHeight / 2);
+          textY);
       });
       
       ctx.restore();
@@ -775,8 +871,11 @@ function render() {
           Math.abs(preview.endY - preview.startY)
         );
       } else if (preview.type === 'circle') {
-        const radius = Math.hypot(preview.endX - preview.startX, preview.endY - preview.startY);
-        ctx.arc(preview.startX, preview.startY, radius, 0, Math.PI * 2);
+        // Calculate center point and radius based on midpoint between start and end
+        const centerX = (preview.startX + preview.endX) / 2;
+        const centerY = (preview.startY + preview.endY) / 2;
+        const radius = Math.hypot(preview.endX - preview.startX, preview.endY - preview.startY) / 2;
+        ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
       } else if (preview.type === 'arrow') {
         ctx.moveTo(preview.startX, preview.startY);
         ctx.lineTo(preview.endX, preview.endY);
@@ -887,6 +986,69 @@ function render() {
     }
 
     openDB().then(() => { loadShapes(); }).catch(console.error);
+
+    // Add function to erase shapes at coordinates
+    function eraseShapesAt(x, y) {
+      let wasErased = false;
+      
+      // Filter shapes to keep only those not under the eraser
+      shapes = shapes.filter(shape => {
+        // Use getShapeAt logic but with eraser radius
+        if (shape.type === 'square') {
+          // Check if eraser circle overlaps with rectangle
+          // Simple check - if center of eraser is within eraserRadius distance from rectangle edges
+          const nearLeftEdge = Math.abs(x - shape.x) <= eraserRadius && 
+                              y >= shape.y - eraserRadius && y <= shape.y + shape.height + eraserRadius;
+          const nearRightEdge = Math.abs(x - (shape.x + shape.width)) <= eraserRadius && 
+                               y >= shape.y - eraserRadius && y <= shape.y + shape.height + eraserRadius;
+          const nearTopEdge = Math.abs(y - shape.y) <= eraserRadius && 
+                             x >= shape.x - eraserRadius && x <= shape.x + shape.width + eraserRadius;
+          const nearBottomEdge = Math.abs(y - (shape.y + shape.height)) <= eraserRadius && 
+                                x >= shape.x - eraserRadius && x <= shape.x + shape.width + eraserRadius;
+          
+          // Also check if eraser is inside the rectangle
+          const insideRect = x >= shape.x && x <= shape.x + shape.width && 
+                            y >= shape.y && y <= shape.y + shape.height;
+          
+          if (nearLeftEdge || nearRightEdge || nearTopEdge || nearBottomEdge || insideRect) {
+            wasErased = true;
+            return false; // Don't keep this shape
+          }
+        } else if (shape.type === 'circle') {
+          // For circle, check if eraser circle intersects with shape circle
+          const dist = Math.hypot(x - shape.x, y - shape.y);
+          if (dist <= shape.radius + eraserRadius) {
+            wasErased = true;
+            return false; // Don't keep this shape
+          }
+        } else if (shape.type === 'draw') {
+          // For freehand drawing, check if eraser is near any segment
+          for (let j = 1; j < shape.points.length; j++) {
+            const p1 = shape.points[j-1];
+            const p2 = shape.points[j];
+            const dist = distanceToLine({x, y}, p1, p2);
+            if (dist <= eraserRadius) {
+              wasErased = true;
+              return false; // Don't keep this shape
+            }
+          }
+        } else if (shape.type === 'arrow') {
+          // For arrow, check if eraser is near the line
+          const dist = distanceToLine({x, y}, {x: shape.startX, y: shape.startY}, {x: shape.endX, y: shape.endY});
+          if (dist <= eraserRadius) {
+            wasErased = true;
+            return false; // Don't keep this shape
+          }
+        }
+        return true; // Keep this shape
+      });
+      
+      if (wasErased) {
+        saveState(); // Save state for undo
+        saveShapes(); // Update storage
+        render();
+      }
+    }
   </script>
 </body>
 </html>
