@@ -146,12 +146,13 @@
     <button id="mode-draw" data-mode="draw" title="Freehand Draw">✐</button>
     <button id="mode-square" data-mode="square" title="Draw Square">▢</button>
     <button id="mode-circle" data-mode="circle" title="Draw Circle">◯</button>
+    <button id="mode-line" data-mode="line" title="Draw Line">—</button>
     <button id="mode-arrow" data-mode="arrow" title="Draw Arrow">➜</button>
     <button id="mode-select" data-mode="select" title="Select/Move/Delete Shapes">⬚</button>
     <button id="mode-erase" data-mode="erase" title="Erase Shapes">⌫</button>
     <button id="screenshot" title="Download as Image">↧</button>
-    <button id="save-drawing" title="Save Current Drawing">💾</button>
-    <button id="history" title="View Saved Drawings">🕒</button>
+    <button id="save-drawing" title="Save Current Drawing">⊞</button>
+    <button id="history" title="View Saved Drawings">☰</button>
     <button id="mode-delete" data-mode="delete" title="Delete All">✖</button>
   </div>
 
@@ -207,7 +208,7 @@
     });
 
     /************ Shapes and Canvas Setup ************/
-    let currentMode = 'write'; // Modes: write, draw, square, circle, arrow, select, erase
+    let currentMode = 'write'; // Modes: write, draw, square, circle, line, arrow, select, erase
     let shapes = [];           // Array to hold drawn shapes (each may have a .text property)
     let currentShape = null;   // For freehand drawing (draw mode)
     let isDrawing = false;     // True when drawing is in progress
@@ -321,7 +322,7 @@
           width: Math.max(...xs) - Math.min(...xs),
           height: Math.max(...ys) - Math.min(...ys)
         };
-      } else if (shape.type === 'arrow') {
+      } else if (shape.type === 'arrow' || shape.type === 'line') {
         box = {
           x: Math.min(shape.startX, shape.endX),
           y: Math.min(shape.startY, shape.endY),
@@ -374,8 +375,8 @@
               return shape;
             }
           }
-        } else if (shape.type === 'arrow') {
-          // For arrow, check if point is near the line
+        } else if (shape.type === 'arrow' || shape.type === 'line') {
+          // For arrow/line, check if point is near the line
           const dist = distanceToLine({x, y}, {x: shape.startX, y: shape.startY}, {x: shape.endX, y: shape.endY});
           if (dist <= BORDER_THRESHOLD) {
             return shape;
@@ -443,7 +444,7 @@
           if (s.type === 'square' || s.type === 'circle') {
             s.x = s.initialX + dx;
             s.y = s.initialY + dy;
-          } else if (s.type === 'arrow') {
+          } else if (s.type === 'arrow' || s.type === 'line') {
             s.startX = s.initialStartX + dx;
             s.startY = s.initialStartY + dy;
             s.endX = s.initialEndX + dx;
@@ -467,7 +468,7 @@
         ctx.moveTo(lastPoint.x, lastPoint.y);
         ctx.lineTo(x, y);
         ctx.stroke();
-      } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') && isDrawing) {
+      } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow' || currentMode === 'line') && isDrawing) {
         previewShape = { type: currentMode, startX, startY, endX: x, endY: y };
         render();
         drawPreview(previewShape);
@@ -533,7 +534,7 @@
           if (s.type === 'square' || s.type === 'circle') {
             s.initialX = s.x;
             s.initialY = s.y;
-          } else if (s.type === 'arrow') {
+          } else if (s.type === 'arrow' || s.type === 'line') {
             s.initialStartX = s.startX;
             s.initialStartY = s.startY;
             s.initialEndX = s.endX;
@@ -550,7 +551,7 @@
       if (currentMode === 'draw') {
         isDrawing = true;
         currentShape = { type: 'draw', points: [{x, y}] };
-      } else if (['square', 'circle', 'arrow'].includes(currentMode)) {
+      } else if (['square', 'circle', 'arrow', 'line'].includes(currentMode)) {
         isDrawing = true;
         startX = x;
         startY = y;
@@ -573,7 +574,7 @@
         if (currentMode === 'draw' && currentShape) {
           shapes.push(currentShape);
           currentShape = null;
-        } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow') && previewShape) {
+        } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow' || currentMode === 'line') && previewShape) {
           // Convert preview shape to final shape
           if (currentMode === 'square') {
             shapes.push({
@@ -597,6 +598,14 @@
           } else if (currentMode === 'arrow') {
             shapes.push({
               type: 'arrow',
+              startX: previewShape.startX,
+              startY: previewShape.startY,
+              endX: previewShape.endX,
+              endY: previewShape.endY
+            });
+          } else if (currentMode === 'line') {
+            shapes.push({
+              type: 'line',
               startX: previewShape.startX,
               startY: previewShape.startY,
               endX: previewShape.endX,
@@ -912,7 +921,7 @@ function render() {
       for (let i = 1; i < shape.points.length; i++) {
         ctx.lineTo(shape.points[i].x, shape.points[i].y);
       }
-    } else if (shape.type === 'arrow') {
+    } else if (shape.type === 'arrow' || shape.type === 'line') {
       ctx.moveTo(shape.startX, shape.startY);
       ctx.lineTo(shape.endX, shape.endY);
     }
@@ -1015,6 +1024,9 @@ function render() {
         ctx.lineTo(preview.endX - headLength * Math.cos(angle - arrowAngle), preview.endY - headLength * Math.sin(angle - arrowAngle));
         ctx.moveTo(preview.endX, preview.endY);
         ctx.lineTo(preview.endX - headLength * Math.cos(angle + arrowAngle), preview.endY - headLength * Math.sin(angle + arrowAngle));
+      } else if (preview.type === 'line') {
+        ctx.moveTo(preview.startX, preview.startY);
+        ctx.lineTo(preview.endX, preview.endY);
       }
       ctx.stroke();
       ctx.restore();
@@ -1054,7 +1066,7 @@ function render() {
           for (let i = 1; i < s.points.length; i++) {
             ctx.lineTo(s.points[i].x, s.points[i].y);
           }
-        } else if (s.type === 'arrow') {
+        } else if (s.type === 'arrow' || s.type === 'line') {
           // Draw the arrow line
           ctx.moveTo(s.startX, s.startY);
           ctx.lineTo(s.endX, s.endY);
@@ -1221,8 +1233,8 @@ function render() {
               return false; // Don't keep this shape
             }
           }
-        } else if (shape.type === 'arrow') {
-          // For arrow, check if eraser is near the line
+        } else if (shape.type === 'arrow' || shape.type === 'line') {
+          // For arrow/line, check if eraser is near the line
           const dist = distanceToLine({x, y}, {x: shape.startX, y: shape.startY}, {x: shape.endX, y: shape.endY});
           if (dist <= eraserRadius) {
             wasErased = true;
