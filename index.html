@@ -180,8 +180,13 @@
         <span class="close">&times;</span>
       </div>
       <div style="margin-bottom: 10px; font-size: 14px; color: #555;">
-        <p>This is the JSON representation of your current drawing. You can view, edit, or replace it with new data.</p>
-        <p>To apply changes, click the "Apply Changes" button. <strong>Note:</strong> Each shape needs a "type" property (square, circle, arrow, line, or draw).</p>
+        <p>This is the complete representation of your current drawing, including both shapes and text content.</p>
+        <p>You can view, edit, or replace it with new data. The drawing consists of two main parts:</p>
+        <ul style="margin-top: 5px;">
+          <li><strong>shapes</strong>: Array of canvas objects (each requires a "type" property)</li>
+          <li><strong>editorContent</strong>: Text content from the editor behind the canvas</li>
+        </ul>
+        <p>To apply changes, click the "Apply Changes" button.</p>
       </div>
       <div id="code-editor-container" style="height: 300px; border: 1px solid #ddd;">
         <!-- Code editor will be inserted here -->
@@ -717,40 +722,37 @@ document.addEventListener('keydown', (e) => {
     /************* Delete ********************************************/
     // Add this click handler for the delete all button
 document.getElementById('mode-delete').addEventListener('click', () => {
-  if (confirm('Do you want to save the current drawing before clearing?')) {
-    // Save current drawing to savedDrawings store
-    saveCurrentDrawingToHistory("Drawing " + new Date().toLocaleString());
+  if (confirm('Do you want to clear everything? Use the ⊞ button first if you want to save this drawing.')) {
+    // Clear the canvas
+    shapes = [];
+    selectedShapes = [];
+    currentShape = null;
+    isDrawing = false;
+    previewShape = null;
+    selRect = null;
+    
+    // Clear the CodeMirror editor
+    editor.setValue('');
+    
+    // Clear the localStorage
+    localStorage.removeItem("codemirror-text");
+    
+    // Clear and reset IndexedDB shapes
+    if (db) {
+      const transaction = db.transaction("shapes", "readwrite");
+      const store = transaction.objectStore("shapes");
+      store.clear().onsuccess = function() {
+        console.log("Current drawing cleared");
+      };
+    }
+    
+    // Reset undo/redo stacks
+    undoStack = [];
+    redoStack = [];
+    
+    // Render the empty canvas
+    render();
   }
-  
-  // Clear the canvas
-  shapes = [];
-  selectedShapes = [];
-  currentShape = null;
-  isDrawing = false;
-  previewShape = null;
-  selRect = null;
-  
-  // Clear the CodeMirror editor
-  editor.setValue('');
-  
-  // Clear the localStorage
-  localStorage.removeItem("codemirror-text");
-  
-  // Clear and reset IndexedDB shapes
-  if (db) {
-    const transaction = db.transaction("shapes", "readwrite");
-    const store = transaction.objectStore("shapes");
-    store.clear().onsuccess = function() {
-      console.log("Current drawing cleared");
-    };
-  }
-  
-  // Reset undo/redo stacks
-  undoStack = [];
-  redoStack = [];
-  
-  // Render the empty canvas
-  render();
 });
 
 // Function to save current drawing to history
@@ -764,12 +766,16 @@ function saveCurrentDrawingToHistory(name) {
   request.onsuccess = function(event) {
     const currentShapes = event.target.result;
     
-    // Create a saved drawing entry with timestamp
+    // Get the current CodeMirror content
+    const editorContent = editor.getValue();
+    
+    // Create a saved drawing entry with timestamp and editor content
     const savedDrawing = {
       name: name,
       shapes: JSON.parse(JSON.stringify(currentShapes)), // Deep copy
       timestamp: new Date().getTime(),
-      preview: canvas.toDataURL('image/png', 0.5) // Store a preview image
+      preview: canvas.toDataURL('image/png', 0.5), // Store a preview image
+      editorContent: editorContent // Store the CodeMirror content
     };
     
     // Save to savedDrawings store
@@ -1334,6 +1340,7 @@ function render() {
           drawingItem.innerHTML = `
             <img class="drawing-preview" src="${drawing.preview}" alt="Drawing Preview">
             <div class="drawing-name">${drawing.name}</div>
+            ${drawing.editorContent ? '<div class="drawing-info" style="font-size: 12px; color: #666; margin: 3px 0;">Includes text content</div>' : ''}
             <div class="drawing-controls">
               <button class="load-btn">Load</button>
               <button class="delete-btn">Delete</button>
@@ -1375,6 +1382,11 @@ function render() {
       
       // Load shapes from saved drawing
       shapes = JSON.parse(JSON.stringify(drawing.shapes));
+      
+      // Restore CodeMirror content if available
+      if (drawing.editorContent !== undefined) {
+        editor.setValue(drawing.editorContent);
+      }
       
       // Clear current DB store
       const transaction = db.transaction("shapes", "readwrite");
@@ -1453,8 +1465,14 @@ function render() {
       request.onsuccess = function(event) {
         const currentShapes = event.target.result;
         
+        // Create a complete drawing object including editor content
+        const drawingData = {
+          shapes: currentShapes,
+          editorContent: editor.getValue()
+        };
+        
         // Format and display as JSON
-        const formattedJson = JSON.stringify(currentShapes, null, 2);
+        const formattedJson = JSON.stringify(drawingData, null, 2);
         codeEditor.setValue(formattedJson);
         
         // Show modal
@@ -1476,19 +1494,35 @@ function render() {
         // Parse the JSON from the editor
         const jsonData = JSON.parse(codeEditor.getValue());
         
-        if (!Array.isArray(jsonData)) {
-          throw new Error("Data must be an array of shapes");
+        // Handle both new format (with editorContent) and old format (just shapes array)
+        let shapesData;
+        let editorContent;
+        
+        if (Array.isArray(jsonData)) {
+          // Old format - just an array of shapes
+          shapesData = jsonData;
+        } else if (jsonData.shapes && Array.isArray(jsonData.shapes)) {
+          // New format - object with shapes and possibly editorContent
+          shapesData = jsonData.shapes;
+          editorContent = jsonData.editorContent;
+        } else {
+          throw new Error("Data must contain a 'shapes' array or be an array of shapes");
         }
         
         // Check if it has valid shape objects
-        for (const shape of jsonData) {
+        for (const shape of shapesData) {
           if (!shape.type) {
             throw new Error("Each shape must have a 'type' property");
           }
         }
         
-        // Apply the changes
-        shapes = jsonData;
+        // Apply the shapes changes
+        shapes = shapesData;
+        
+        // Apply editor content if provided
+        if (editorContent !== undefined) {
+          editor.setValue(editorContent);
+        }
         
         // Clear current DB store
         const transaction = db.transaction("shapes", "readwrite");
