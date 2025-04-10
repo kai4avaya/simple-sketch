@@ -197,7 +197,7 @@
       <button id="share-btn" title="Share Drawing">↗</button>
       <div class="dropdown-content" style="right: 0; left: auto;">
         <a id="share-editable">Download Editable</a>
-        <a id="share-view-only">Download View Only</a>
+        <a id="share-view-only-link">Share View Only Link</a>
         <a id="share-link">Share Link</a>
       </div>
     </div>
@@ -986,16 +986,22 @@ function wrapText(ctx, text, maxWidth) {
 
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  shapes.forEach(shape => {
+  
+  console.log(`Rendering ${shapes.length} shapes`);
+  
+  shapes.forEach((shape, index) => {
+    console.log(`Rendering shape ${index}: type=${shape.type}`);
     ctx.beginPath();
     if (shape.type === 'square') {
       ctx.rect(shape.x, shape.y, shape.width, shape.height);
     } else if (shape.type === 'circle') {
       ctx.arc(shape.x, shape.y, shape.radius, 0, Math.PI * 2);
     } else if (shape.type === 'draw') {
-      ctx.moveTo(shape.points[0].x, shape.points[0].y);
-      for (let i = 1; i < shape.points.length; i++) {
-        ctx.lineTo(shape.points[i].x, shape.points[i].y);
+      if (shape.points && shape.points.length > 0) {
+        ctx.moveTo(shape.points[0].x, shape.points[0].y);
+        for (let i = 1; i < shape.points.length; i++) {
+          ctx.lineTo(shape.points[i].x, shape.points[i].y);
+        }
       }
     } else if (shape.type === 'arrow' || shape.type === 'line') {
       ctx.moveTo(shape.startX, shape.startY);
@@ -1209,9 +1215,11 @@ function render() {
       const request = store.getAll();
       request.onsuccess = function(event) {
         shapes = event.target.result;
+        console.log(`Loaded ${shapes.length} shapes from IndexedDB`);
         
         // If no shapes in DB and premadeSketch has items, load the premade sketch
         if (shapes.length === 0 && premadeSketch && premadeSketch.length > 0) {
+          console.log(`Loading ${premadeSketch.length} shapes from premadeSketch`);
           shapes = premadeSketch;
           // Save premade shapes to DB
           const saveTransaction = db.transaction("shapes", "readwrite");
@@ -1219,7 +1227,14 @@ function render() {
           premadeSketch.forEach(shape => saveStore.add(shape));
         }
         
-        render();
+        // Ensure we render after a short delay to make sure everything is loaded
+        setTimeout(() => {
+          render();
+        }, 100);
+      };
+      
+      request.onerror = function(error) {
+        console.error('Error loading shapes from IndexedDB:', error);
       };
     }
 
@@ -1688,12 +1703,63 @@ function render() {
     function checkUrlForDrawing() {
       const urlParams = new URLSearchParams(window.location.search);
       const drawingParam = urlParams.get('drawing');
+      const viewOnlyParam = urlParams.get('viewOnly');
+      const isViewOnly = viewOnlyParam === 'true';
+      
+      console.log('URL parameters:', { drawing: !!drawingParam, viewOnly: isViewOnly });
+      
+      if (isViewOnly) {
+        // Set editor to read-only mode
+        editor.setOption('readOnly', true);
+        
+        // Hide all toolbar buttons except the share button
+        const buttons = document.querySelectorAll('#toolbar button:not(#share-btn)');
+        buttons.forEach(button => {
+          button.style.display = 'none';
+        });
+        
+        // Hide dropdown content except the share-view-only-link
+        const dropdownItems = document.querySelectorAll('.dropdown-content a:not(#share-view-only-link)');
+        dropdownItems.forEach(item => {
+          item.style.display = 'none';
+        });
+        
+        // Position share button to the right and make it visible
+        const shareBtn = document.getElementById('share-btn');
+        const shareDropdown = shareBtn.parentElement;
+        if (shareBtn && shareDropdown) {
+          // Clear the toolbar
+          const toolbar = document.getElementById('toolbar');
+          toolbar.style.display = 'flex';
+          toolbar.style.justifyContent = 'flex-end';
+          
+          // Make sure share dropdown is visible
+          shareDropdown.style.display = 'inline-block';
+          shareBtn.style.display = 'inline-block';
+          
+          // Ensure dropdown content appears on the left of the button in view-only mode
+          const dropdownContent = shareDropdown.querySelector('.dropdown-content');
+          if (dropdownContent) {
+            dropdownContent.style.right = 'auto';
+            dropdownContent.style.left = '0';
+          }
+        }
+        
+        // Show notification that we're in view-only mode
+        showTooltip("View-only mode active");
+      }
       
       if (drawingParam) {
         try {
           // Decode and decompress the drawing data
           const jsonData = atob(decodeURIComponent(drawingParam));
           const drawingData = JSON.parse(jsonData);
+          
+          console.log('Drawing data loaded:', { 
+            hasShapes: !!drawingData.shapes, 
+            shapeCount: drawingData.shapes ? drawingData.shapes.length : 0,
+            hasEditorContent: !!drawingData.editorContent 
+          });
           
           // Load shapes
           if (drawingData.shapes && Array.isArray(drawingData.shapes)) {
@@ -1709,21 +1775,31 @@ function render() {
             const store = transaction.objectStore("shapes");
             store.clear().onsuccess = function() {
               // Add shapes to DB
+              console.log('Adding shapes to DB, count:', shapes.length);
+              let shapesAdded = 0;
+              
               shapes.forEach(shape => {
                 // Remove any existing ID to avoid conflicts
                 delete shape.id;
-                store.add(shape);
+                const addRequest = store.add(shape);
+                addRequest.onsuccess = function() {
+                  shapesAdded++;
+                  // When all shapes are added, render the canvas
+                  if (shapesAdded === shapes.length) {
+                    console.log('All shapes added to DB, rendering now');
+                    // Reset undo/redo stacks
+                    undoStack = [];
+                    redoStack = [];
+                    
+                    // Render after a short delay to ensure DB operations complete
+                    setTimeout(() => {
+                      render();
+                      // Show notification that a shared drawing was loaded
+                      showTooltip("Shared drawing loaded successfully");
+                    }, 100);
+                  }
+                };
               });
-              
-              // Reset undo/redo stacks
-              undoStack = [];
-              redoStack = [];
-              
-              // Render
-              render();
-              
-              // Show notification that a shared drawing was loaded
-              showTooltip("Shared drawing loaded successfully");
             };
           }
         } catch (error) {
@@ -1735,7 +1811,429 @@ function render() {
   </script>
   
   <!-- Include share functionality -->
-  <script src="js/share.js"></script>
+  <script>
+    /**
+ * share.js - Handles share functionality for the canvas sketcher app
+ */
+
+// Share functionality
+document.addEventListener('DOMContentLoaded', function() {
+    console.log('Share.js loaded');
+    // Get share buttons
+    const shareEditableBtn = document.getElementById('share-editable');
+    const shareViewOnlyBtn = document.getElementById('share-view-only-link');
+    const shareBtn = document.getElementById('share-btn');
+    
+    console.log('Share buttons found:', !!shareEditableBtn, !!shareViewOnlyBtn, !!shareBtn);
+
+    // Add event listeners
+    if (shareEditableBtn) {
+        shareEditableBtn.addEventListener('click', function() {
+            console.log('Share editable clicked');
+            shareDrawing(false);
+        });
+    }
+
+    if (shareViewOnlyBtn) {
+        shareViewOnlyBtn.addEventListener('click', function() {
+            console.log('Share view-only clicked');
+            shareViewOnlyLink();
+        });
+    }
+});
+
+/**
+ * Creates and copies a view-only shareable link
+ */
+function shareViewOnlyLink() {
+    // Get current drawing data from IndexedDB
+    const transaction = db.transaction("shapes", "readonly");
+    const store = transaction.objectStore("shapes");
+    const request = store.getAll();
+    
+    request.onsuccess = function(event) {
+        const currentShapes = event.target.result;
+        
+        // Create a drawing object with shapes and editor content
+        const drawingData = {
+            shapes: currentShapes,
+            editorContent: editor.getValue()
+        };
+        
+        // Compress the drawing data
+        const jsonString = JSON.stringify(drawingData);
+        const compressedData = btoa(jsonString);
+        
+        // Create URL with parameters
+        const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
+        const shareUrl = `${currentUrl}?drawing=${encodeURIComponent(compressedData)}&viewOnly=true`;
+        
+        // Copy to clipboard
+        navigator.clipboard.writeText(shareUrl).then(() => {
+            // Show notification
+            const shareLinkTippy = tippy(document.getElementById('share-view-only-link'), {
+                content: 'Link copied to clipboard!',
+                trigger: 'manual',
+                placement: 'bottom',
+                duration: [300, 1000]
+            });
+            
+            shareLinkTippy.show();
+            setTimeout(() => shareLinkTippy.hide(), 2000);
+        }).catch(error => {
+            console.error('Error copying link:', error);
+            alert('Error creating view-only link. Please try again.');
+        });
+    };
+    
+    request.onerror = function(error) {
+        console.error('Error retrieving shapes from IndexedDB:', error);
+        alert('Error creating view-only link. Please try again.');
+    };
+}
+
+/**
+ * Shares the drawing by downloading an HTML file with the current drawing state
+ * @param {boolean} viewOnly - Whether to make the shared version view-only
+ */
+function shareDrawing(viewOnly) {
+    console.log('Sharing drawing, view-only:', viewOnly);
+    
+    // Get current shapes from the global shapes array with better fallback
+    let currentShapes = [];
+    
+    // Try multiple ways to access the shapes to ensure we get them
+    if (window.shapes && window.shapes.length > 0) {
+        console.log('Using window.shapes with length:', window.shapes.length);
+        currentShapes = window.shapes;
+    } else if (typeof shapes !== 'undefined' && shapes.length > 0) {
+        console.log('Using global shapes variable with length:', shapes.length);
+        currentShapes = shapes;
+    } else {
+        console.warn('No shapes found in global scope, attempting to retrieve from IndexedDB');
+        
+        // Try to get shapes from IndexedDB directly if available
+        if (window.db) {
+            const getShapesPromise = new Promise((resolve) => {
+                const transaction = window.db.transaction("shapes", "readonly");
+                const store = transaction.objectStore("shapes");
+                const request = store.getAll();
+                
+                request.onsuccess = function(event) {
+                    const dbShapes = event.target.result || [];
+                    console.log('Retrieved shapes from IndexedDB:', dbShapes.length);
+                    resolve(dbShapes);
+                };
+                
+                request.onerror = function() {
+                    console.error('Error retrieving shapes from IndexedDB');
+                    resolve([]);
+                };
+                
+                // Add a timeout in case the DB request hangs
+                setTimeout(() => resolve([]), 1000);
+            });
+            
+            // Get HTML content and wait for shapes from IndexedDB
+            return Promise.all([
+                fetch(window.location.href),
+                getShapesPromise
+            ]).then(([response, dbShapes]) => {
+                return response.text().then(htmlContent => {
+                    console.log('Processing with shapes from IndexedDB, count:', dbShapes.length);
+                    return { htmlContent, shapes: dbShapes };
+                });
+            }).then(({ htmlContent, shapes }) => {
+                // Get current editor content
+                const editorContent = window.editor ? window.editor.getValue() : '';
+                
+                // Create modified HTML content
+                let modifiedHtml = createModifiedHtml(
+                    htmlContent, 
+                    shapes, 
+                    editorContent, 
+                    viewOnly
+                );
+                
+                // Download the modified HTML file
+                downloadHtmlFile(modifiedHtml, viewOnly);
+            }).catch(error => {
+                console.error("Error sharing drawing:", error);
+                alert("Error creating shareable version. Please try again.");
+            });
+        }
+    }
+    
+    console.log('Final shapes for export:', currentShapes.length, currentShapes);
+    
+    // Get current HTML content with the standard flow
+    fetch(window.location.href)
+        .then(response => response.text())
+        .then(htmlContent => {
+            // Get current editor content
+            const editorContent = window.editor ? window.editor.getValue() : '';
+            
+            // Create modified HTML content
+            let modifiedHtml = createModifiedHtml(
+                htmlContent, 
+                currentShapes, 
+                editorContent, 
+                viewOnly
+            );
+            
+            // Download the modified HTML file
+            downloadHtmlFile(modifiedHtml, viewOnly);
+        })
+        .catch(error => {
+            console.error("Error fetching HTML:", error);
+            alert("Error creating shareable version. Please try again.");
+        });
+}
+
+/**
+ * Creates a modified HTML file with the current drawing embedded
+ * @param {string} htmlContent - Original HTML content
+ * @param {Array} shapes - Array of shape objects
+ * @param {string} editorContent - CodeMirror editor content
+ * @param {boolean} viewOnly - Whether to make the shared version view-only
+ * @returns {string} Modified HTML content
+ */
+function createModifiedHtml(htmlContent, shapes, editorContent, viewOnly) {
+    console.log('Creating modified HTML with', shapes.length, 'shapes');
+    
+    // Early validation - if no shapes, add debug info to console
+    if (!shapes || shapes.length === 0) {
+        console.warn('Warning: No shapes to export!');
+        console.trace('Call stack for empty shapes');
+    }
+    
+    // Create a deep copy of shapes without ids
+    const shapesForExport = JSON.parse(JSON.stringify(shapes)).map(shape => {
+        delete shape.id;
+        return shape;
+    });
+    
+    // Format the shapes array content as JSON string with explicit indentation
+    const shapesArrayString = JSON.stringify(shapesForExport, null, 2);
+    console.log('Formatted shapes array string length:', shapesArrayString.length);
+    
+    let newHtml = htmlContent;
+    let shapesInserted = false;
+    
+    // Try with several patterns to find the premadeSketch array
+    // Pattern 1: Standard declaration with any content
+    const standardPattern = /(const\s+premadeSketch\s*=\s*)\[[\s\S]*?\];/;
+    // Pattern 2: More permissive with comments
+    const permissivePattern = /(const\s+premadeSketch\s*=\s*)\[(\s|\/\/[^\n]*\n)*\];/;
+    
+    // Try the first pattern
+    if (standardPattern.test(htmlContent)) {
+        console.log('Found standard premadeSketch array declaration');
+        newHtml = htmlContent.replace(standardPattern, `$1${shapesArrayString};`);
+        shapesInserted = true;
+    } 
+    // Try the second pattern if first didn't match
+    else if (permissivePattern.test(htmlContent)) {
+        console.log('Found permissive premadeSketch array declaration');
+        newHtml = htmlContent.replace(permissivePattern, `$1${shapesArrayString};`);
+        shapesInserted = true;
+    }
+    // If neither pattern matched, try to insert at specific locations
+    else {
+        console.log('No existing premadeSketch array found, trying to insert one');
+        
+        // Try to find the script section that declares the openDB function
+        const openDBPattern = /openDB\(\)\.then\(/;
+        if (openDBPattern.test(htmlContent)) {
+            console.log('Found openDB function, inserting before it');
+            newHtml = htmlContent.replace(
+                openDBPattern, 
+                `// Inserted premadeSketch for shared version\nconst premadeSketch = ${shapesArrayString};\n\n    openDB().then(`
+            );
+            shapesInserted = true;
+        }
+        
+        // If still not inserted, try to add before the closing script tag
+        if (!shapesInserted) {
+            const scriptEndPattern = /\s*<\/script>\s*\s*<script src="js\/share\.js"><\/script>/;
+            if (scriptEndPattern.test(htmlContent)) {
+                console.log('Found main script end, inserting before it');
+                newHtml = htmlContent.replace(
+                    scriptEndPattern,
+                    `\n  // Inserted premadeSketch for shared version\n  const premadeSketch = ${shapesArrayString};\n  <\/script>\n  <script src="js/share.js"><\/script>`
+                );
+                shapesInserted = true;
+            }
+        }
+        
+        // Last resort - insert just before body end
+        if (!shapesInserted) {
+            console.log('Using fallback insertion before </body>');
+            newHtml = htmlContent.replace(
+                '</body>',
+                `<script>\n  // Inserted premadeSketch for shared version\n  const premadeSketch = ${shapesArrayString};\n<\/script>\n</body>`
+            );
+            shapesInserted = true;
+        }
+    }
+    
+    if (!shapesInserted) {
+        console.error('Failed to insert premadeSketch array into the HTML');
+        alert('Warning: Could not properly integrate shapes into the shared file. The drawing may not appear correctly.');
+    } else {
+        console.log('Successfully inserted shapes into premadeSketch array');
+    }
+    
+    // Set the CodeMirror initial content
+    if (editorContent) {
+        const editorContentEscaped = editorContent
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+        
+        newHtml = newHtml.replace(
+            /<textarea id="code"[^>]*>[\s\S]*?<\/textarea>/,
+            `<textarea id="code" name="code">${editorContentEscaped}</textarea>`
+        );
+    }
+    
+    // If view-only mode, add modifications to disable editing
+    if (viewOnly) {
+        // Simplified view-only mode: just hide toolbar and make editor read-only
+        const viewOnlyStyles = `
+    <!-- View-only mode styles -->
+    <style>
+      /* Modify toolbar to only show share button on the right */
+      #toolbar {
+        display: flex !important;
+        justify-content: flex-end !important;
+        background: #f5f5f5 !important;
+        height: 35px !important;
+        padding: 5px 15px !important;
+      }
+      
+      /* Make editor read-only appearance */
+      .CodeMirror {
+        cursor: default !important;
+      }
+      
+      .CodeMirror-cursor {
+        display: none !important;
+      }
+      
+      /* Dropdown positioning fix */
+      .dropdown-content {
+        right: auto !important;
+        left: 0 !important;
+      }
+      
+      /* View-only indicator */
+      .view-only-indicator {
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        background: rgba(0,0,0,0.5);
+        color: white;
+        padding: 5px 10px;
+        border-radius: 3px;
+        font-size: 12px;
+        z-index: 1000;
+      }
+    </style>`;
+        
+        // Insert view-only styles before </head>
+        newHtml = newHtml.replace('</head>', `${viewOnlyStyles}\n</head>`);
+        
+        // Add script to disable editing
+        const viewOnlyScript = `
+    <script>
+      // Disable editing in view-only mode
+      document.addEventListener('DOMContentLoaded', function() {
+        // Make CodeMirror read-only
+        if (window.editor) {
+          window.editor.setOption('readOnly', true);
+        }
+        
+        // Force canvas pointer-events to none to prevent drawing
+        const canvas = document.getElementById('overlayCanvas');
+        if (canvas) {
+          canvas.style.pointerEvents = 'none';
+        }
+        
+        // Add a view-only indicator
+        const viewOnlyIndicator = document.createElement('div');
+        viewOnlyIndicator.className = 'view-only-indicator';
+        viewOnlyIndicator.textContent = 'View Only Mode';
+        document.body.appendChild(viewOnlyIndicator);
+        
+        // Hide all toolbar buttons except share button
+        const buttons = document.querySelectorAll('#toolbar button:not(#share-btn)');
+        buttons.forEach(button => {
+          button.style.display = 'none';
+        });
+        
+        // Hide dropdown content except share-view-only-link
+        const dropdownItems = document.querySelectorAll('.dropdown-content a:not(#share-view-only-link)');
+        dropdownItems.forEach(item => {
+          item.style.display = 'none';
+        });
+        
+        // Position share button to the right
+        const shareBtn = document.getElementById('share-btn');
+        const shareDropdown = shareBtn.parentElement;
+        if (shareBtn && shareDropdown) {
+          // Position toolbar content to the right
+          const toolbar = document.getElementById('toolbar');
+          toolbar.style.display = 'flex';
+          toolbar.style.justifyContent = 'flex-end';
+          
+          // Make sure share dropdown is visible
+          shareDropdown.style.display = 'inline-block';
+          shareBtn.style.display = 'inline-block';
+          
+          // Ensure dropdown content appears on the left of the button
+          const dropdownContent = shareDropdown.querySelector('.dropdown-content');
+          if (dropdownContent) {
+            dropdownContent.style.right = 'auto';
+            dropdownContent.style.left = '0';
+          }
+        }
+        
+        // Adjust editor container to go to top since toolbar is hidden
+        const editorContainer = document.getElementById('editor-container');
+        if (editorContainer) {
+          editorContainer.style.top = '0';
+        }
+      });
+    <\/script>`;
+        
+        // Insert view-only script before </body>
+        newHtml = newHtml.replace('</body>', `${viewOnlyScript}\n</body>`);
+    }
+    
+    return newHtml;
+}
+
+/**
+ * Downloads the HTML content as a file
+ * @param {string} htmlContent - HTML content to download
+ * @param {boolean} viewOnly - Whether this is a view-only version
+ */
+function downloadHtmlFile(htmlContent, viewOnly) {
+    console.log('Downloading HTML file');
+    const blob = new Blob([htmlContent], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = viewOnly ? 'sketch-view-only.html' : 'sketch-editable.html';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }, 100);
+} 
+  </script>
 
   
 </body>
