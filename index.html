@@ -1732,16 +1732,21 @@ function render() {
           const toolbar = document.getElementById('toolbar');
           toolbar.style.display = 'flex';
           toolbar.style.justifyContent = 'flex-end';
+          toolbar.style.paddingRight = '20px'; // Add padding to prevent dropdown from hitting edge
           
           // Make sure share dropdown is visible
           shareDropdown.style.display = 'inline-block';
           shareBtn.style.display = 'inline-block';
           
-          // Ensure dropdown content appears on the left of the button in view-only mode
+          // Ensure dropdown content appears properly positioned
           const dropdownContent = shareDropdown.querySelector('.dropdown-content');
           if (dropdownContent) {
+            // Reset positioning to let browser calculate best position
             dropdownContent.style.right = 'auto';
-            dropdownContent.style.left = '0';
+            dropdownContent.style.left = 'auto';
+            // Position dropdown to the left of the button with enough space
+            dropdownContent.style.transform = 'translateX(-75%)';
+            dropdownContent.style.minWidth = '180px'; // Make dropdown wider
           }
         }
         
@@ -2110,6 +2115,7 @@ function createModifiedHtml(htmlContent, shapes, editorContent, viewOnly) {
         background: #f5f5f5 !important;
         height: 35px !important;
         padding: 5px 15px !important;
+        padding-right: 20px !important;
       }
       
       /* Make editor read-only appearance */
@@ -2124,7 +2130,20 @@ function createModifiedHtml(htmlContent, shapes, editorContent, viewOnly) {
       /* Dropdown positioning fix */
       .dropdown-content {
         right: auto !important;
-        left: 0 !important;
+        left: auto !important;
+        transform: translateX(-75%) !important;
+        min-width: 180px !important;
+      }
+      
+      /* Ensure dropdown menu is visible */
+      .dropdown:hover .dropdown-content {
+        display: block !important;
+      }
+      
+      /* Style the share button for better visibility */
+      #share-btn {
+        background-color: #f9f9f9 !important;
+        border-radius: 3px !important;
       }
       
       /* View-only indicator */
@@ -2186,16 +2205,21 @@ function createModifiedHtml(htmlContent, shapes, editorContent, viewOnly) {
           const toolbar = document.getElementById('toolbar');
           toolbar.style.display = 'flex';
           toolbar.style.justifyContent = 'flex-end';
+          toolbar.style.paddingRight = '20px'; // Add padding to prevent dropdown from hitting edge
           
           // Make sure share dropdown is visible
           shareDropdown.style.display = 'inline-block';
           shareBtn.style.display = 'inline-block';
           
-          // Ensure dropdown content appears on the left of the button
+          // Ensure dropdown content appears properly positioned
           const dropdownContent = shareDropdown.querySelector('.dropdown-content');
           if (dropdownContent) {
+            // Reset positioning to let browser calculate best position
             dropdownContent.style.right = 'auto';
-            dropdownContent.style.left = '0';
+            dropdownContent.style.left = 'auto';
+            // Position dropdown to the left of the button with enough space
+            dropdownContent.style.transform = 'translateX(-75%)';
+            dropdownContent.style.minWidth = '180px'; // Make dropdown wider
           }
         }
         
