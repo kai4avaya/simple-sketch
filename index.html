@@ -196,8 +196,9 @@
     <div class="dropdown" style="display: inline-block;">
       <button id="share-btn" title="Share Drawing">↗</button>
       <div class="dropdown-content" style="right: 0; left: auto;">
-        <a id="share-editable">Share Editable</a>
-        <a id="share-view-only">Share View Only</a>
+        <a id="share-editable">Download Editable</a>
+        <a id="share-view-only">Download View Only</a>
+        <a id="share-link">Share Link</a>
       </div>
     </div>
   </div>
@@ -1181,6 +1182,9 @@ function render() {
         request.onsuccess = function(event) {
           db = event.target.result;
           resolve(db);
+          
+          // Check for drawing in URL parameters when page loads
+          checkUrlForDrawing();
         };
         request.onerror = function(event) {
           reject("IndexedDB error");
@@ -1621,7 +1625,113 @@ function render() {
           }
         }
       });
+      
+      // Create a Tippy instance for the share link button to show copy confirmation
+      const shareLinkTippy = tippy(document.getElementById('share-link'), {
+        content: 'Link copied to clipboard!',
+        trigger: 'manual',
+        theme: 'light-border',
+        placement: 'top',
+        arrow: true,
+        duration: [300, 1000]
+      });
+      
+      // Add share link functionality
+      document.getElementById('share-link').addEventListener('click', async () => {
+        try {
+          // Get current drawing data from IndexedDB
+          const transaction = db.transaction("shapes", "readonly");
+          const store = transaction.objectStore("shapes");
+          const request = store.getAll();
+          
+          request.onsuccess = function(event) {
+            const currentShapes = event.target.result;
+            
+            // Create a drawing object with shapes and editor content
+            const drawingData = {
+              shapes: currentShapes,
+              editorContent: editor.getValue()
+            };
+            
+            // Convert to JSON and compress
+            const jsonData = JSON.stringify(drawingData);
+            
+            // Simple compression using base64 (you might want a better compression algorithm for larger drawings)
+            const compressedData = btoa(jsonData);
+            
+            // Create URL with parameter
+            const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
+            const shareUrl = `${currentUrl}?drawing=${encodeURIComponent(compressedData)}`;
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(shareUrl).then(() => {
+              // Show success message
+              shareLinkTippy.setContent('Link copied to clipboard!');
+              shareLinkTippy.show();
+              
+              // Hide the tooltip after 2 seconds
+              setTimeout(() => {
+                shareLinkTippy.hide();
+              }, 2000);
+            });
+          };
+        } catch (error) {
+          console.error('Error creating share link:', error);
+          shareLinkTippy.setContent('Error creating link');
+          shareLinkTippy.show();
+          setTimeout(() => shareLinkTippy.hide(), 2000);
+        }
+      });
     });
+
+    // Function to check URL for drawing data and load it if present
+    function checkUrlForDrawing() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const drawingParam = urlParams.get('drawing');
+      
+      if (drawingParam) {
+        try {
+          // Decode and decompress the drawing data
+          const jsonData = atob(decodeURIComponent(drawingParam));
+          const drawingData = JSON.parse(jsonData);
+          
+          // Load shapes
+          if (drawingData.shapes && Array.isArray(drawingData.shapes)) {
+            shapes = drawingData.shapes;
+            
+            // Update the editor content if available
+            if (drawingData.editorContent !== undefined) {
+              editor.setValue(drawingData.editorContent);
+            }
+            
+            // Clear current DB store
+            const transaction = db.transaction("shapes", "readwrite");
+            const store = transaction.objectStore("shapes");
+            store.clear().onsuccess = function() {
+              // Add shapes to DB
+              shapes.forEach(shape => {
+                // Remove any existing ID to avoid conflicts
+                delete shape.id;
+                store.add(shape);
+              });
+              
+              // Reset undo/redo stacks
+              undoStack = [];
+              redoStack = [];
+              
+              // Render
+              render();
+              
+              // Show notification that a shared drawing was loaded
+              showTooltip("Shared drawing loaded successfully");
+            };
+          }
+        } catch (error) {
+          console.error('Error loading drawing from URL:', error);
+          showTooltip("Error loading shared drawing");
+        }
+      }
+    }
   </script>
   
   <!-- Include share functionality -->
