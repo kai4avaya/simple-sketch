@@ -1632,10 +1632,10 @@ function render() {
           const jsonString = atob(drawingParam);
           const drawingData = JSON.parse(jsonString);
 
-          // Apply the shapes
+          // Apply the shapes without saving to IndexedDB
           if (drawingData.shapes && Array.isArray(drawingData.shapes)) {
             shapes = drawingData.shapes;
-            saveShapes();
+            // Don't call saveShapes() here to prevent saving to IndexedDB
           }
 
           // Apply the editor content if available
@@ -1665,6 +1665,9 @@ function render() {
         } catch (error) {
           console.error('Error loading drawing from URL:', error);
         }
+      } else {
+        // If no drawing in URL, load from IndexedDB as normal
+        loadShapes();
       }
     }
 
@@ -1680,35 +1683,43 @@ function render() {
 
     function loadShapes() {
       if (!db) return;
-      const transaction = db.transaction("shapes", "readonly");
-      const store = transaction.objectStore("shapes");
-      const request = store.getAll();
-      request.onsuccess = function(event) {
-        shapes = event.target.result;
-        console.log(`Loaded ${shapes.length} shapes from IndexedDB`);
-        
-        // If no shapes in DB and premadeSketch has items, load the premade sketch
-        if (shapes.length === 0 && premadeSketch && premadeSketch.length > 0) {
-          console.log(`Loading ${premadeSketch.length} shapes from premadeSketch`);
-          shapes = premadeSketch;
-          // Save premade shapes to DB
-          const saveTransaction = db.transaction("shapes", "readwrite");
-          const saveStore = saveTransaction.objectStore("shapes");
-          premadeSketch.forEach(shape => saveStore.add(shape));
-        }
-        
-        // Save initial state
-        saveState();
-        
-        // Ensure we render after a short delay to make sure everything is loaded
-        setTimeout(() => {
-          render();
-        }, 100);
-      };
       
-      request.onerror = function(error) {
-        console.error('Error loading shapes from IndexedDB:', error);
-      };
+      // Check if we're loading from a URL first
+      const urlParams = new URLSearchParams(window.location.search);
+      const drawingParam = urlParams.get('drawing');
+      
+      // Only load from IndexedDB if there's no drawing in URL
+      if (!drawingParam) {
+        const transaction = db.transaction("shapes", "readonly");
+        const store = transaction.objectStore("shapes");
+        const request = store.getAll();
+        request.onsuccess = function(event) {
+          shapes = event.target.result;
+          console.log(`Loaded ${shapes.length} shapes from IndexedDB`);
+          
+          // If no shapes in DB and premadeSketch has items, load the premade sketch
+          if (shapes.length === 0 && premadeSketch && premadeSketch.length > 0) {
+            console.log(`Loading ${premadeSketch.length} shapes from premadeSketch`);
+            shapes = premadeSketch;
+            // Save premade shapes to DB
+            const saveTransaction = db.transaction("shapes", "readwrite");
+            const saveStore = saveTransaction.objectStore("shapes");
+            premadeSketch.forEach(shape => saveStore.add(shape));
+          }
+          
+          // Save initial state
+          saveState();
+          
+          // Ensure we render after a short delay to make sure everything is loaded
+          setTimeout(() => {
+            render();
+          }, 100);
+        };
+        
+        request.onerror = function(error) {
+          console.error('Error loading shapes from IndexedDB:', error);
+        };
+      }
     }
 
     // Define a premadeSketch array - add shapes here to auto-load when DB is empty
