@@ -2407,6 +2407,117 @@ Generate a similar data structure based on the user's request.`
         });
       });
     });
+
+    // Add this function before the share functions
+    function safeEncode(str) {
+      // First encode the string to handle all Unicode characters
+      const encodedStr = encodeURIComponent(str);
+      // Then convert to base64
+      return btoa(encodedStr);
+    }
+
+    function safeDecode(str) {
+      // First decode from base64
+      const decodedStr = atob(str);
+      // Then decode the URI component
+      return decodeURIComponent(decodedStr);
+    }
+
+    // Modify the shareEditableLink function
+    function shareEditableLink() {
+        // Get current drawing data from IndexedDB
+        const transaction = db.transaction("shapes", "readonly");
+        const store = transaction.objectStore("shapes");
+        const request = store.getAll();
+        
+        request.onsuccess = function(event) {
+            const currentShapes = event.target.result;
+            
+            // Create a drawing object with shapes and editor content
+            const drawingData = {
+                shapes: currentShapes,
+                editorContent: editor.getValue()
+            };
+            
+            // Compress the drawing data using safe encoding
+            const jsonString = JSON.stringify(drawingData);
+            const compressedData = safeEncode(jsonString);
+            
+            // Create URL with parameters (without viewOnly)
+            const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
+            const shareUrl = `${currentUrl}?drawing=${encodeURIComponent(compressedData)}`;
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(shareUrl).then(() => {
+                // Show notification
+                const shareLinkTippy = tippy(document.getElementById('share-link'), {
+                    content: 'Link copied to clipboard!',
+                    trigger: 'manual',
+                    placement: 'bottom',
+                    duration: [300, 1000]
+                });
+                
+                shareLinkTippy.show();
+                setTimeout(() => shareLinkTippy.hide(), 2000);
+            }).catch(error => {
+                console.error('Error copying link:', error);
+                alert('Error creating shareable link. Please try again.');
+            });
+        };
+        
+        request.onerror = function(error) {
+            console.error('Error retrieving shapes from IndexedDB:', error);
+            alert('Error creating shareable link. Please try again.');
+        };
+    }
+
+    // Modify the shareViewOnlyLink function
+    function shareViewOnlyLink() {
+        // Get current drawing data from IndexedDB
+        const transaction = db.transaction("shapes", "readonly");
+        const store = transaction.objectStore("shapes");
+        const request = store.getAll();
+        
+        request.onsuccess = function(event) {
+            const currentShapes = event.target.result;
+            
+            // Create a drawing object with shapes and editor content
+            const drawingData = {
+                shapes: currentShapes,
+                editorContent: editor.getValue()
+            };
+            
+            // Compress the drawing data using safe encoding
+            const jsonString = JSON.stringify(drawingData);
+            const compressedData = safeEncode(jsonString);
+            
+            // Create URL with parameters
+            const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
+            const shareUrl = `${currentUrl}?drawing=${encodeURIComponent(compressedData)}&viewOnly=true`;
+            
+            // Copy to clipboard
+            navigator.clipboard.writeText(shareUrl).then(() => {
+                // Show notification
+                const shareLinkTippy = tippy(document.getElementById('share-view-only-link'), {
+                    content: 'Link copied to clipboard!',
+                    trigger: 'manual',
+                    placement: 'bottom',
+                    duration: [300, 1000]
+                });
+                
+                shareLinkTippy.show();
+                setTimeout(() => shareLinkTippy.hide(), 2000);
+            }).catch(error => {
+                console.error('Error copying link:', error);
+                alert('Error creating view-only link. Please try again.');
+            });
+        };
+        
+        request.onerror = function(error) {
+            console.error('Error retrieving shapes from IndexedDB:', error);
+            alert('Error creating view-only link. Please try again.');
+        };
+    }
   </script>
   
   <!-- Include share functionality -->
@@ -2421,77 +2532,93 @@ document.addEventListener('DOMContentLoaded', function() {
     // Get share buttons
     const shareEditableBtn = document.getElementById('share-editable');
     const shareViewOnlyBtn = document.getElementById('share-view-only-link');
+    const shareLinkBtn = document.getElementById('share-link');
     const shareBtn = document.getElementById('share-btn');
     
-    console.log('Share buttons found:', !!shareEditableBtn, !!shareViewOnlyBtn, !!shareBtn);
-
-    // Add event listeners
+    // Add event listeners with improved error handling
     if (shareEditableBtn) {
-        shareEditableBtn.addEventListener('click', function() {
-            console.log('Share editable clicked');
+        shareEditableBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
             shareDrawing(false);
         });
     }
 
     if (shareViewOnlyBtn) {
-        shareViewOnlyBtn.addEventListener('click', function() {
-            console.log('Share view-only clicked');
+        shareViewOnlyBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
             shareViewOnlyLink();
         });
     }
 
-    // Add click handler for share editable link
-    const shareLinkBtn = document.getElementById('share-link');
     if (shareLinkBtn) {
-        shareLinkBtn.addEventListener('click', function() {
-            console.log('Share editable link clicked');
-            // Get current drawing data from IndexedDB
-            const transaction = db.transaction("shapes", "readonly");
-            const store = transaction.objectStore("shapes");
-            const request = store.getAll();
-            
-            request.onsuccess = function(event) {
-                const currentShapes = event.target.result;
-                
-                // Create a drawing object with shapes and editor content
-                const drawingData = {
-                    shapes: currentShapes,
-                    editorContent: editor.getValue()
-                };
-                
-                // Compress the drawing data
-                const jsonString = JSON.stringify(drawingData);
-                const compressedData = btoa(jsonString);
-                
-                // Create URL with parameters (without viewOnly)
-                const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
-                const shareUrl = `${currentUrl}?drawing=${encodeURIComponent(compressedData)}`;
-                
-                // Copy to clipboard
-                navigator.clipboard.writeText(shareUrl).then(() => {
-                    // Show notification
-                    const shareLinkTippy = tippy(document.getElementById('share-link'), {
-                        content: 'Link copied to clipboard!',
-                        trigger: 'manual',
-                        placement: 'bottom',
-                        duration: [300, 1000]
-                    });
-                    
-                    shareLinkTippy.show();
-                    setTimeout(() => shareLinkTippy.hide(), 2000);
-                }).catch(error => {
-                    console.error('Error copying link:', error);
-                    alert('Error creating shareable link. Please try again.');
-                });
-            };
-            
-            request.onerror = function(error) {
-                console.error('Error retrieving shapes from IndexedDB:', error);
-                alert('Error creating shareable link. Please try again.');
-            };
+        shareLinkBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            shareEditableLink();
         });
     }
+
+    // Ensure dropdown stays open when clicking items
+    const dropdown = document.querySelector('.dropdown');
+    if (dropdown) {
+        const dropdownContent = dropdown.querySelector('.dropdown-content');
+        if (dropdownContent) {
+            dropdownContent.addEventListener('click', function(e) {
+                e.stopPropagation();
+            });
+        }
+    }
 });
+
+// Add this new function for sharing editable links
+function shareEditableLink() {
+    // Get current drawing data from IndexedDB
+    const transaction = db.transaction("shapes", "readonly");
+    const store = transaction.objectStore("shapes");
+    const request = store.getAll();
+    
+    request.onsuccess = function(event) {
+        const currentShapes = event.target.result;
+        
+        // Create a drawing object with shapes and editor content
+        const drawingData = {
+            shapes: currentShapes,
+            editorContent: editor.getValue()
+        };
+        
+        // Compress the drawing data using safe encoding
+        const jsonString = JSON.stringify(drawingData);
+        const compressedData = safeEncode(jsonString);
+        
+        // Create URL with parameters (without viewOnly)
+        const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
+        const shareUrl = `${currentUrl}?drawing=${encodeURIComponent(compressedData)}`;
+        
+        // Copy to clipboard
+        navigator.clipboard.writeText(shareUrl).then(() => {
+            // Show notification
+            const shareLinkTippy = tippy(document.getElementById('share-link'), {
+                content: 'Link copied to clipboard!',
+                trigger: 'manual',
+                placement: 'bottom',
+                duration: [300, 1000]
+            });
+            
+            shareLinkTippy.show();
+            setTimeout(() => shareLinkTippy.hide(), 2000);
+        }).catch(error => {
+            console.error('Error copying link:', error);
+            alert('Error creating shareable link. Please try again.');
+        });
+    };
+    
+    request.onerror = function(error) {
+        console.error('Error retrieving shapes from IndexedDB:', error);
+        alert('Error creating shareable link. Please try again.');
+    };
+}
 
 /**
  * Creates and copies a view-only shareable link
@@ -2511,9 +2638,9 @@ function shareViewOnlyLink() {
             editorContent: editor.getValue()
         };
         
-        // Compress the drawing data
+        // Compress the drawing data using safe encoding
         const jsonString = JSON.stringify(drawingData);
-        const compressedData = btoa(jsonString);
+        const compressedData = safeEncode(jsonString);
         
         // Create URL with parameters
         const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
