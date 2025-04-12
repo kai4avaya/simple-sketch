@@ -1628,9 +1628,13 @@ function render() {
 
       if (drawingParam) {
         try {
-          // Decode and parse the drawing data
-          const jsonString = atob(drawingParam);
-          const drawingData = JSON.parse(jsonString);
+          // First decode the URL-encoded parameter
+          const decodedParam = decodeURIComponent(drawingParam);
+          // Then decode the base64 and parse the JSON
+          const jsonString = atob(decodedParam);
+          // The jsonString is still URL-encoded, so decode it again
+          const finalJsonString = decodeURIComponent(jsonString);
+          const drawingData = JSON.parse(finalJsonString);
 
           // Apply the shapes without saving to IndexedDB
           if (drawingData.shapes && Array.isArray(drawingData.shapes)) {
@@ -1664,6 +1668,9 @@ function render() {
           render();
         } catch (error) {
           console.error('Error loading drawing from URL:', error);
+          console.error('Drawing parameter:', drawingParam);
+          console.error('Decoded parameter:', decodeURIComponent(drawingParam));
+          console.error('Base64 decoded:', atob(decodeURIComponent(drawingParam)));
         }
       } else {
         // If no drawing in URL, load from IndexedDB as normal
@@ -2456,7 +2463,8 @@ Generate a similar data structure based on the user's request.`
             
             // Create URL with parameters (without viewOnly)
             const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
-            const shareUrl = `${currentUrl}?drawing=${encodeURIComponent(compressedData)}`;
+            // Don't encode the compressed data again since it's already encoded
+            const shareUrl = `${currentUrl}?drawing=${compressedData}`;
             
             // Copy to clipboard
             navigator.clipboard.writeText(shareUrl).then(() => {
@@ -2504,7 +2512,8 @@ Generate a similar data structure based on the user's request.`
             
             // Create URL with parameters
             const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
-            const shareUrl = `${currentUrl}?drawing=${encodeURIComponent(compressedData)}&viewOnly=true`;
+            // Don't encode the compressed data again since it's already encoded
+            const shareUrl = `${currentUrl}?drawing=${compressedData}&viewOnly=true`;
             
             // Copy to clipboard
             navigator.clipboard.writeText(shareUrl).then(() => {
