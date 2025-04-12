@@ -396,6 +396,8 @@
     <button id="mode-select" data-mode="select" title="Select/Move/Delete Shapes">⬚</button>
     <button id="mode-erase" data-mode="erase" title="Erase Shapes">⌫</button>
     <button id="screenshot" title="Download as Image">↧</button>
+    <button id="undo-btn" title="Undo (Ctrl+Z)">↺</button>
+    <button id="redo-btn" title="Redo (Ctrl+Shift+Z)">↻</button>
     <button id="save-drawing" title="Save Current Drawing">⊞</button>
     <button id="history" title="View Saved Drawings">☰</button>
     <button id="code-view" title="View/Edit Drawing Data">{ }</button>
@@ -984,58 +986,59 @@
         if (currentMode === 'draw' && currentShape) {
           shapes.push(currentShape);
           currentShape = null;
+          saveState();
         } else if ((currentMode === 'square' || currentMode === 'circle' || currentMode === 'arrow' || currentMode === 'line') && previewShape) {
-          // Convert preview shape to final shape
+          let newShape;
           if (currentMode === 'square') {
-            shapes.push({
+            newShape = {
               type: 'square',
               x: Math.min(previewShape.startX, previewShape.endX),
               y: Math.min(previewShape.startY, previewShape.endY),
               width: Math.abs(previewShape.endX - previewShape.startX),
               height: Math.abs(previewShape.endY - previewShape.startY)
-            });
+            };
           } else if (currentMode === 'circle') {
             const centerX = (previewShape.startX + previewShape.endX) / 2;
             const centerY = (previewShape.startY + previewShape.endY) / 2;
             const radius = Math.hypot(previewShape.endX - previewShape.startX, 
                                     previewShape.endY - previewShape.startY) / 2;
-            shapes.push({
+            newShape = {
               type: 'circle',
               x: centerX,
               y: centerY,
               radius: radius
-            });
+            };
           } else if (currentMode === 'arrow') {
-            shapes.push({
+            newShape = {
               type: 'arrow',
               startX: previewShape.startX,
               startY: previewShape.startY,
               endX: previewShape.endX,
               endY: previewShape.endY
-            });
+            };
           } else if (currentMode === 'line') {
-            shapes.push({
+            newShape = {
               type: 'line',
               startX: previewShape.startX,
               startY: previewShape.startY,
               endX: previewShape.endX,
               endY: previewShape.endY
-            });
+            };
           }
+          
+          if (newShape) {
+            shapes.push(newShape);
+            saveState();
+          }
+          
           previewShape = null;
-        } else if (currentMode === 'erase') {
-          // Finished erasing, render once more to remove eraser cursor
-          render();
         }
-        saveState();
+        
         render();
         saveShapes();
-        
-        // Check content bounds after adding a new shape
         checkContentBounds();
       }
       
-      // Clear selection rectangle if it exists
       if (selRect) {
         selRect = null;
         render();
@@ -1049,25 +1052,37 @@ let redoStack = [];
 
 // Function to save state for undo
 function saveState() {
-  redoStack = []; // Clear redo stack when new action is performed
-  undoStack.push(JSON.stringify(shapes));
+  const currentState = JSON.stringify(shapes);
+  
+  // Only save state if it's different from the last state
+  if (undoStack.length === 0 || undoStack[undoStack.length - 1] !== currentState) {
+    redoStack = []; // Clear redo stack when new action is performed
+    undoStack.push(currentState);
+    console.log('State saved, undo stack size:', undoStack.length); // Debug logging
+  }
 }
 
 // Function to handle undo
 function undo() {
   if (undoStack.length > 0) {
+    console.log('Undoing, stack size before:', undoStack.length); // Debug logging
     redoStack.push(JSON.stringify(shapes));
     shapes = JSON.parse(undoStack.pop());
     render();
+    saveShapes();
+    console.log('Undo complete, stack size after:', undoStack.length); // Debug logging
   }
 }
 
 // Function to handle redo
 function redo() {
   if (redoStack.length > 0) {
+    console.log('Redoing, stack size before:', redoStack.length); // Debug logging
     undoStack.push(JSON.stringify(shapes));
     shapes = JSON.parse(redoStack.pop());
     render();
+    saveShapes();
+    console.log('Redo complete, stack size after:', redoStack.length); // Debug logging
   }
 }
 
@@ -1093,13 +1108,15 @@ document.addEventListener('keydown', (e) => {
     /************ Keyboard Events for Deletion ************/
     window.addEventListener("keydown", (e) => {
       if ((e.key === "Delete" || e.key === "Backspace") && selectedShapes.length > 0) {
-        // Only delete shapes if we're not in write mode (to avoid interfering with text editing)
         if (currentMode !== "write") {
+          const originalShapes = [...shapes];
           shapes = shapes.filter(s => !selectedShapes.includes(s));
-          selectedShapes = [];
-          saveState(); // Save state for undo/redo
-          saveShapes();
-          render();
+          if (shapes.length !== originalShapes.length) {
+            selectedShapes = [];
+            saveState();
+            saveShapes();
+            render();
+          }
         }
       }
     });
@@ -1180,9 +1197,17 @@ document.getElementById('screenshot').addEventListener('click', function() {
   const tempCanvas = document.createElement('canvas');
   const tempCtx = tempCanvas.getContext('2d');
   
-  // Set the canvas size to match the CodeMirror wrapper
+  // Get the full content height by checking the CodeMirror's scroll info
+  const scrollInfo = editor.getScrollInfo();
+  const fullHeight = Math.max(
+    codeMirrorWrapper.clientHeight,
+    scrollInfo.height,
+    canvas.height
+  );
+  
+  // Set the canvas size to match the full content
   tempCanvas.width = codeMirrorWrapper.clientWidth;
-  tempCanvas.height = codeMirrorWrapper.clientHeight;
+  tempCanvas.height = fullHeight;
   
   // First draw a white background
   tempCtx.fillStyle = 'white';
@@ -1195,6 +1220,8 @@ document.getElementById('screenshot').addEventListener('click', function() {
       backgroundColor: null,
       scale: 1,
       logging: true,
+      height: fullHeight,
+      windowHeight: fullHeight,
       ignoreElements: (element) => element.id === 'overlayCanvas'
     }).then(function(editorCanvas) {
       // Draw the editor content
@@ -1203,11 +1230,14 @@ document.getElementById('screenshot').addEventListener('click', function() {
       // Then draw the canvas content (drawings) on top
       tempCtx.drawImage(canvas, 0, 0);
       
-      // Get the image data
+      // Get the image data and create download link
       const imageData = tempCanvas.toDataURL('image/png');
-      
-      // Send the image data to the parent window
-      window.parent.postMessage({ type: 'download-screenshot', imageData }, '*');
+      const link = document.createElement('a');
+      link.download = 'sketch.png';
+      link.href = imageData;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
     });
   } catch (error) {
     console.error('Error capturing editor:', error);
@@ -1215,11 +1245,14 @@ document.getElementById('screenshot').addEventListener('click', function() {
     // Fallback: just draw the canvas content
     tempCtx.drawImage(canvas, 0, 0);
     
-    // Get the image data
+    // Get the image data and create download link
     const imageData = tempCanvas.toDataURL('image/png');
-    
-    // Send the image data to the parent window
-    window.parent.postMessage({ type: 'download-screenshot', imageData }, '*');
+    const link = document.createElement('a');
+    link.download = 'sketch.png';
+    link.href = imageData;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   }
 });
 
@@ -1616,6 +1649,9 @@ function render() {
           premadeSketch.forEach(shape => saveStore.add(shape));
         }
         
+        // Save initial state
+        saveState();
+        
         // Ensure we render after a short delay to make sure everything is loaded
         setTimeout(() => {
           render();
@@ -1673,63 +1709,22 @@ function render() {
 
     // Add function to erase shapes at coordinates
     function eraseShapesAt(x, y) {
+      const originalShapes = [...shapes];
       let wasErased = false;
       
-      // Filter shapes to keep only those not under the eraser
       shapes = shapes.filter(shape => {
-        // Use getShapeAt logic but with eraser radius
-        if (shape.type === 'square') {
-          // Check if eraser circle overlaps with rectangle
-          // Simple check - if center of eraser is within eraserRadius distance from rectangle edges
-          const nearLeftEdge = Math.abs(x - shape.x) <= eraserRadius && 
-                              y >= shape.y - eraserRadius && y <= shape.y + shape.height + eraserRadius;
-          const nearRightEdge = Math.abs(x - (shape.x + shape.width)) <= eraserRadius && 
-                               y >= shape.y - eraserRadius && y <= shape.y + shape.height + eraserRadius;
-          const nearTopEdge = Math.abs(y - shape.y) <= eraserRadius && 
-                             x >= shape.x - eraserRadius && x <= shape.x + shape.width + eraserRadius;
-          const nearBottomEdge = Math.abs(y - (shape.y + shape.height)) <= eraserRadius && 
-                                x >= shape.x - eraserRadius && x <= shape.x + shape.width + eraserRadius;
-          
-          // Also check if eraser is inside the rectangle
-          const insideRect = x >= shape.x && x <= shape.x + shape.width && 
-                            y >= shape.y && y <= shape.y + shape.height;
-          
-          if (nearLeftEdge || nearRightEdge || nearTopEdge || nearBottomEdge || insideRect) {
-            wasErased = true;
-            return false; // Don't keep this shape
-          }
-        } else if (shape.type === 'circle') {
-          // For circle, check if eraser circle intersects with shape circle
-          const dist = Math.hypot(x - shape.x, y - shape.y);
-          if (dist <= shape.radius + eraserRadius) {
-            wasErased = true;
-            return false; // Don't keep this shape
-          }
-        } else if (shape.type === 'draw') {
-          // For freehand drawing, check if eraser is near any segment
-          for (let j = 1; j < shape.points.length; j++) {
-            const p1 = shape.points[j-1];
-            const p2 = shape.points[j];
-            const dist = distanceToLine({x, y}, p1, p2);
-            if (dist <= eraserRadius) {
-              wasErased = true;
-              return false; // Don't keep this shape
-            }
-          }
-        } else if (shape.type === 'arrow' || shape.type === 'line') {
-          // For arrow/line, check if eraser is near the line
-          const dist = distanceToLine({x, y}, {x: shape.startX, y: shape.startY}, {x: shape.endX, y: shape.endY});
-          if (dist <= eraserRadius) {
-            wasErased = true;
-            return false; // Don't keep this shape
-          }
+        // ... existing shape filtering logic ...
+        if (shouldKeep) {
+          return true;
+        } else {
+          wasErased = true;
+          return false;
         }
-        return true; // Keep this shape
       });
       
       if (wasErased) {
-        saveState(); // Save state for undo
-        saveShapes(); // Update storage
+        saveState();
+        saveShapes();
         render();
       }
     }
@@ -2030,6 +2025,10 @@ function render() {
         }
       });
 
+      // Add click handlers for undo/redo buttons
+      document.getElementById('undo-btn').addEventListener('click', undo);
+      document.getElementById('redo-btn').addEventListener('click', redo);
+
       // Initialize AI Generation Modal
       const aiModal = document.getElementById('ai-modal');
       const aiGenerateBtn = document.getElementById('ai-generate');
@@ -2144,6 +2143,9 @@ Generate a similar data structure based on the user's request.`
           return;
         }
 
+        // Define messageInterval in the outer scope so it can be accessed in the finally block
+        let messageInterval;
+        
         try {
           // Show loading indicator
           const loadingIndicator = document.getElementById('loading-indicator');
@@ -2160,7 +2162,7 @@ Generate a similar data structure based on the user's request.`
             "Almost ready with your diagram..."
           ];
           let messageIndex = 0;
-          const messageInterval = setInterval(() => {
+          messageInterval = setInterval(() => {
             loadingMessages.textContent = messages[messageIndex];
             messageIndex++;
             // Stop cycling when we reach the last message
@@ -2214,8 +2216,10 @@ Generate a similar data structure based on the user's request.`
           console.error('Error:', error);
           alert('Error: ' + error.message);
         } finally {
-          // Clear message interval
-          clearInterval(messageInterval);
+          // Clear message interval if it exists
+          if (messageInterval) {
+            clearInterval(messageInterval);
+          }
           
           // Hide loading indicator
           const loadingIndicator = document.getElementById('loading-indicator');
