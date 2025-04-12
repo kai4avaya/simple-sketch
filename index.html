@@ -49,6 +49,7 @@
       left: 0;
       right: 0;
       height: calc(100vh - 40px); /* Add explicit height calculation */
+      overflow: auto; /* Default to auto to only show scrollbars when needed */
     }
     /* CodeMirror fills its container and shows line numbers */
     .CodeMirror {
@@ -139,14 +140,19 @@
       cursor: pointer;
       position: relative;
       z-index: 1002; /* Ensure links are above everything */
+      pointer-events: auto !important; /* Force pointer events */
     }
     
-    .dropdown-content a:hover {
-      background-color: #f1f1f1;
-    }
-    
+    /* Ensure dropdown is always clickable */
     .dropdown:hover .dropdown-content {
       display: block;
+      pointer-events: auto !important;
+    }
+    
+    /* Additional safeguard for dropdown items */
+    .dropdown-content a:hover {
+      background-color: #f1f1f1;
+      pointer-events: auto !important;
     }
     
     .drawing-grid {
@@ -209,6 +215,48 @@
       max-width: 800px;
       border-radius: 8px;
       box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Loading indicator styles */
+    .loading-container {
+      display: none;
+      text-align: center;
+      padding: 5px;
+      margin: 0;
+      display: inline-block;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+    
+    .loading-spinner {
+      display: inline-block;
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(0, 0, 0, 0.1);
+      border-radius: 50%;
+      border-top-color: #3498db;
+      animation: spin 1s ease-in-out infinite;
+      margin-right: 10px;
+      vertical-align: middle;
+    }
+    
+    .loading-text {
+      color: #555;
+      font-size: 12px;
+      display: inline-block;
+      vertical-align: middle;
+    }
+    
+    .loading-messages {
+      display: none;
+      margin-top: 10px;
+      font-size: 12px;
+      color: #666;
+      font-style: italic;
+    }
+    
+    @keyframes spin {
+      to { transform: rotate(360deg); }
     }
 
     .modal-header {
@@ -435,6 +483,11 @@
       </div>
       <div style="margin-bottom: 20px;">
         <button id="send-request" style="padding: 8px 16px;">Send Request</button>
+        <div class="loading-container" id="loading-indicator" style="display: none;">
+          <div class="loading-spinner"></div>
+          <div class="loading-text">Generating...</div>
+        </div>
+        <div class="loading-messages" id="loading-messages" style="display: none;"></div>
       </div>
       <div>
         <h3>Response</h3>
@@ -515,7 +568,54 @@
       canvas.height = codeMirrorWrapper.clientHeight;
       editor.refresh();
       render();
+      
+      // Check if content extends beyond viewport and adjust scrollbars accordingly
+      checkContentBounds();
     }
+    
+    // Function to check if content extends beyond viewport
+    function checkContentBounds() {
+      // Get the editor container
+      const editorContainer = document.getElementById('editor-container');
+      
+      // Find the bounds of all shapes
+      let maxX = 0;
+      let maxY = 0;
+      
+      shapes.forEach(shape => {
+        if (shape.type === 'square') {
+          maxX = Math.max(maxX, shape.x + shape.width);
+          maxY = Math.max(maxY, shape.y + shape.height);
+        } else if (shape.type === 'circle') {
+          maxX = Math.max(maxX, shape.x + shape.radius);
+          maxY = Math.max(maxY, shape.y + shape.radius);
+        } else if (shape.type === 'draw' && shape.points) {
+          shape.points.forEach(point => {
+            maxX = Math.max(maxX, point.x);
+            maxY = Math.max(maxY, point.y);
+          });
+        } else if (shape.type === 'arrow' || shape.type === 'line') {
+          maxX = Math.max(maxX, shape.startX, shape.endX);
+          maxY = Math.max(maxY, shape.startY, shape.endY);
+        }
+      });
+      
+      // Add some padding
+      maxX += 50;
+      maxY += 50;
+      
+      // Get the viewport dimensions
+      const viewportWidth = editorContainer.clientWidth;
+      const viewportHeight = editorContainer.clientHeight;
+      
+      // Set overflow based on content size
+      if (maxX > viewportWidth || maxY > viewportHeight) {
+        editorContainer.style.overflow = 'auto';
+      } else {
+        editorContainer.style.overflow = 'hidden';
+      }
+    }
+    
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
@@ -527,6 +627,14 @@
       const dropdown = document.querySelector('.dropdown');
       if (dropdown) {
         dropdown.style.pointerEvents = 'auto';
+        const dropdownContent = dropdown.querySelector('.dropdown-content');
+        if (dropdownContent) {
+          dropdownContent.style.pointerEvents = 'auto';
+        }
+        const links = dropdown.querySelectorAll('a');
+        links.forEach(link => {
+          link.style.pointerEvents = 'auto';
+        });
       }
     }
     updateCanvasPointer();
@@ -922,6 +1030,9 @@
         saveState();
         render();
         saveShapes();
+        
+        // Check content bounds after adding a new shape
+        checkContentBounds();
       }
       
       // Clear selection rectangle if it exists
@@ -1302,6 +1413,9 @@ function render() {
   else if (currentMode !== 'write' && selectedShapes.length > 0) {
     drawSelectedHighlights();
   }
+  
+  // Check content bounds after rendering
+  checkContentBounds();
 }
 
     /************ Drawing and Preview Rendering ************/
@@ -1932,18 +2046,23 @@ function render() {
         value: `You are a helpful AI that generates shape data structures for a canvas drawing application.
 The shapes follow this structure:
 {
-  "type": "square|circle|draw|arrow|line",
-  "x": number,
-  "y": number,
-  "width": number,  // for square
-  "height": number, // for square
-  "radius": number, // for circle
-  "points": [{x: number, y: number}], // for draw
-  "startX": number, // for arrow/line
-  "startY": number, // for arrow/line
-  "endX": number,   // for arrow/line
-  "endY": number,   // for arrow/line
-  "text": string    // optional text label
+  "shapes": [
+    {
+      "type": "square|circle|draw|arrow|line",
+      "x": number,
+      "y": number,
+      "width": number,  // for square
+      "height": number, // for square
+      "radius": number, // for circle
+      "points": [{x: number, y: number}], // for draw
+      "startX": number, // for arrow/line
+      "startY": number, // for arrow/line
+      "endX": number,   // for arrow/line
+      "endY": number,   // for arrow/line
+      "text": string    // optional text label
+    }
+  ],
+  "editorContent": string  // optional text content for the editor
 }
 
 Generate a similar data structure based on the user's request.`
@@ -2026,6 +2145,31 @@ Generate a similar data structure based on the user's request.`
         }
 
         try {
+          // Show loading indicator
+          const loadingIndicator = document.getElementById('loading-indicator');
+          const loadingMessages = document.getElementById('loading-messages');
+          loadingIndicator.style.display = 'inline-block';
+          loadingMessages.style.display = 'block';
+          
+          // Start cycling through messages
+          const messages = [
+            "Analyzing your request...",
+            "Designing shapes for your diagram...",
+            "Creating visual elements...",
+            "Optimizing layout and positioning...",
+            "Almost ready with your diagram..."
+          ];
+          let messageIndex = 0;
+          const messageInterval = setInterval(() => {
+            loadingMessages.textContent = messages[messageIndex];
+            messageIndex++;
+            // Stop cycling when we reach the last message
+            if (messageIndex >= messages.length) {
+              clearInterval(messageInterval);
+            }
+          }, 2000);
+          
+          // Disable button and change text
           sendRequestBtn.disabled = true;
           sendRequestBtn.textContent = 'Sending...';
 
@@ -2059,8 +2203,8 @@ Generate a similar data structure based on the user's request.`
           // Clean the response - remove markdown and extract JSON
           let generatedShapes = data.choices[0].message.content;
           
-          // Remove markdown code blocks and extract JSON array
-          const jsonMatch = generatedShapes.match(/\[[\s\S]*\]/);
+          // Remove markdown code blocks and extract JSON object
+          const jsonMatch = generatedShapes.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
             generatedShapes = jsonMatch[0];
           }
@@ -2070,6 +2214,16 @@ Generate a similar data structure based on the user's request.`
           console.error('Error:', error);
           alert('Error: ' + error.message);
         } finally {
+          // Clear message interval
+          clearInterval(messageInterval);
+          
+          // Hide loading indicator
+          const loadingIndicator = document.getElementById('loading-indicator');
+          const loadingMessages = document.getElementById('loading-messages');
+          loadingIndicator.style.display = 'none';
+          loadingMessages.style.display = 'none';
+          
+          // Re-enable button and restore text
           sendRequestBtn.disabled = false;
           sendRequestBtn.textContent = 'Send Request';
         }
@@ -2079,22 +2233,39 @@ Generate a similar data structure based on the user's request.`
       applyResponseBtn.addEventListener('click', () => {
         try {
           const responseText = responseEditor.getValue();
-          const newShapes = JSON.parse(responseText);
+          const responseData = JSON.parse(responseText);
           
-          if (!Array.isArray(newShapes)) {
-            throw new Error('Response must be an array of shapes');
+          // Handle both array format and object format with shapes and editorContent
+          let shapesData;
+          let editorContent;
+          
+          if (Array.isArray(responseData)) {
+            // Old format - just an array of shapes
+            shapesData = responseData;
+          } else if (responseData.shapes && Array.isArray(responseData.shapes)) {
+            // New format - object with shapes and editorContent
+            shapesData = responseData.shapes;
+            editorContent = responseData.editorContent;
+          } else {
+            throw new Error('Response must contain a shapes array');
           }
 
           // Validate each shape has required properties
-          for (const shape of newShapes) {
+          for (const shape of shapesData) {
             if (!shape.type) {
               throw new Error('Each shape must have a type property');
             }
           }
 
           // Apply the new shapes
-          shapes = newShapes;
+          shapes = shapesData;
           selectedShapes = [];
+          
+          // Apply editor content if provided
+          if (editorContent !== undefined) {
+            editor.setValue(editorContent);
+          }
+          
           saveState();
           saveShapes();
           render();

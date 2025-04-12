@@ -29,15 +29,16 @@ Scratchpad is a versatile web-based application that combines a powerful text ed
 *   **Export & Sharing:**
     *   **Download as Image (↧):** Capture the current view (editor content + canvas drawings) as a PNG image.
     *   **Share Menu (↗):**
-        *   **Download Editable:** (Functionality TBD - currently placeholder)
-        *   **Download View Only:** (Functionality TBD - currently placeholder)
-        *   **Share Link:** Generate a unique URL containing the compressed drawing data (shapes + text). Opening this URL in another browser will load the shared drawing.
+        *   **Download Editable:** Download an HTML file with your drawing embedded that can be edited.
+        *   **Share View Only Link:** Generate a URL that opens your drawing in view-only mode.
+        *   **Share Editable Link:** Generate a URL that opens your drawing in editable mode.
 *   **Data Management:**
     *   **View/Edit Drawing Data ({ }):** View and edit the raw JSON data (shapes and editor content) for the current drawing in a modal.
     *   **Delete All (✖):** Clear the canvas, editor content, and the current session's saved state (prompts for confirmation).
 *   **Undo/Redo:** Standard Ctrl+Z / Ctrl+Shift+Z (or Cmd+Z / Cmd+Shift+Z) for drawing actions.
 *   **Tooltips:** Enhanced tooltips (via Tippy.js) for toolbar buttons provide immediate feedback.
 *   **Preloading:** Option to define a `premadeSketch` in the code to automatically load specific shapes when the application starts with an empty canvas.
+*   **AI Generation (✰):** Generate shapes using AI models via OpenRouter API. Configure your own model, API key, and prompts.
 
 ## Setup
 
@@ -56,6 +57,7 @@ No installation is required. Simply open the `index.html` file in a modern web b
     *   **{ } (Code View):** View/edit the underlying JSON data.
     *   **✖ (Delete All):** Clear everything.
     *   **↗ (Share):** Access download and sharing options.
+    *   **✰ (AI Generate):** Open the AI generation modal to create shapes using AI.
 2.  **Canvas:** The drawing area overlays the text editor. Drawing actions are only active when a drawing tool, select, or erase mode is selected.
 3.  **Editor:** Active when 'T' mode is selected. Text is automatically saved.
 
@@ -63,15 +65,42 @@ No installation is required. Simply open the `index.html` file in a modern web b
 
 Scratchpad offers multiple ways to share your creations:
 
-1. **Share Link:** Click on the Share (↗) button and select "Share Link" to generate a URL that contains your entire drawing (shapes and text) compressed into a URL parameter. When someone opens this link:
+1. **Share Editable Link:** Click on the Share (↗) button and select "Share Editable Link" to generate a URL that contains your entire drawing (shapes and text) compressed into a URL parameter. When someone opens this link:
    * The drawing will automatically load in their browser
    * All shapes, positions, and text will be preserved exactly as you created them
    * They can continue editing from where you left off
    * No server or account is required - everything is embedded in the URL
 
-2. **Image Export:** For a visual representation that can be shared anywhere, use the Download as Image (↧) button to create a PNG of your drawing.
+2. **Share View Only Link:** Click on the Share (↗) button and select "Share View Only Link" to generate a URL that opens your drawing in view-only mode:
+   * The drawing will load with all shapes and text preserved
+   * The toolbar will be hidden except for the share button
+   * The editor will be read-only
+   * The canvas will be non-interactive
+   * Perfect for sharing with others who should only view, not edit
 
-3. **Download Options:** (Coming soon) The Share menu also contains options for downloading your drawing in various formats.
+3. **Download Options:** The Share menu also contains options for downloading your drawing as an HTML file that can be opened locally.
+
+4. **Image Export:** For a visual representation that can be shared anywhere, use the Download as Image (↧) button to create a PNG of your drawing.
+
+## AI Generation
+
+Scratchpad includes an AI generation feature that can create shapes based on your description:
+
+1. **Access AI Generation:** Click the ✰ button in the toolbar to open the AI generation modal.
+
+2. **Configure Settings:**
+   * **Model:** Select an AI model from OpenRouter (default: google/gemini-2.5-pro-exp-03-25:free)
+   * **API Key:** Enter your OpenRouter API key
+   * **Save Settings:** Check this to save your settings in localStorage
+
+3. **Customize Prompts:**
+   * **System Prompt:** The default prompt instructs the AI to generate shape data structures
+   * **User Request:** Describe what you want to create (e.g., "a diagram showing how AI works")
+
+4. **Generate and Apply:**
+   * Click "Send Request" to generate shapes based on your description
+   * Review the generated JSON in the response editor
+   * Click "Apply Generated Shapes" to add the shapes to your canvas
 
 ## Programmatic Drawing Manipulation
 
@@ -97,6 +126,30 @@ The Code View modal ({ }) provides a powerful way to inspect, modify, or program
          "y": 200,
          "radius": 75,
          "text": "Example Circle"
+       },
+       {
+         "type": "arrow",
+         "startX": 200,
+         "startY": 300,
+         "endX": 400,
+         "endY": 300,
+         "text": "Connection"
+       },
+       {
+         "type": "line",
+         "startX": 100,
+         "startY": 400,
+         "endX": 300,
+         "endY": 400
+       },
+       {
+         "type": "draw",
+         "points": [
+           {"x": 500, "y": 100},
+           {"x": 550, "y": 150},
+           {"x": 600, "y": 100}
+         ],
+         "text": "Freehand"
        }
      ],
      "editorContent": "Text content from the editor"
@@ -123,3 +176,32 @@ This provides a powerful interface for developers to create, modify or script dr
 ## Customization
 
 You can preload the canvas with specific shapes by modifying the `premadeSketch` array within the `<script>` tag in `index.html`. This is useful for creating default templates or examples that appear when a user first opens the application. 
+
+
+-------------
+
+# Show HN: Scratchpad - HTML Canvas Drawing and AI Generation
+
+I've built a web-based application that combines a code editor with a canvas drawing tool, allowing you to seamlessly switch between writing code/notes and creating visual diagrams. It's all client-side with no server required.
+
+**Key features:**
+- Dual-mode interface: Write in the editor or draw on the canvas
+- Drawing tools: Freehand, squares, circles, lines, arrows
+- Shape manipulation: Select, move, resize, add text
+- Local persistence: Everything saves automatically to your browser
+- Share functionality: Generate URLs that embed your entire drawing
+- AI generation: Create shapes using AI models via OpenRouter API
+- No installation: Just open the HTML file in a browser
+
+**Technical highlights:**
+- Built with vanilla JavaScript (no frameworks)
+- Uses CodeMirror for the editor and Canvas API for drawing
+- IndexedDB for shape storage and LocalStorage for text
+- Compressed URL sharing with base64 encoding
+- AI integration with customizable prompts
+
+The app is perfect for creating diagrams with explanatory text, sketching UI ideas, or taking visual notes while coding.
+
+Try it out: [GitHub Repository](https://github.com/yourusername/scratchpad)
+
+Would love feedback on the UI/UX and any feature suggestions!
