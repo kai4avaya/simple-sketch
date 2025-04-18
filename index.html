@@ -429,6 +429,33 @@
         display: none; /* Hide on mobile */
       }
     }
+    
+    /* Adjust toolbar layout for label and dropdown */
+    #toolbar {
+      display: flex;
+      align-items: center;
+      position: relative;
+    }
+    #keyboard-shortcut-label.keyboard-shortcut-notice {
+      position: static;
+      margin-left: auto;
+      margin-right: 8px;
+      font-size: 11px;
+      color: #666;
+      font-style: italic;
+      pointer-events: none;
+      opacity: 0.7;
+      white-space: nowrap;
+    }
+    #share-dropdown-container {
+      display: inline-block;
+    }
+    /* Responsive: hide label on mobile */
+    @media (max-width: 768px) {
+      #keyboard-shortcut-label.keyboard-shortcut-notice {
+        display: none;
+      }
+    }
   </style>
 </head>
 <body>
@@ -451,12 +478,17 @@
     <button id="code-view" title="View/Edit Drawing Data">{ }</button>
     <button id="mode-delete" data-mode="delete" title="Delete All">✖</button>
     <button id="ai-generate" title="AI Generate">✰</button>
-    <div class="dropdown" style="display: inline-block;">
-      <button id="share-btn" title="Share Drawing">↗</button>
-      <div class="dropdown-content" style="right: 0; left: auto;">
-        <a id="share-editable">Download Editable</a>
-        <a id="share-view-only-link">Share View Only Link</a>
-        <a id="share-link">Share Editable Link</a>
+    <div id="keyboard-shortcut-label" class="keyboard-shortcut-notice" style="position:static; margin-left:auto; margin-right:8px;">
+      Ctrl + ←/→ to navigate, spacebar to click
+    </div>
+    <div id="share-dropdown-container" style="display:inline-block;">
+      <div class="dropdown" id="share-dropdown">
+        <button id="share-btn" title="Share Drawing">↗</button>
+        <div class="dropdown-content" style="right: 0; left: auto;">
+          <a id="share-editable">Download Editable</a>
+          <a id="share-view-only-link">Share View Only Link</a>
+          <a id="share-link">Share Editable Link</a>
+        </div>
       </div>
     </div>
   </div>
@@ -2017,49 +2049,41 @@ function render() {
           // Old format - just an array of shapes
           shapesData = jsonData;
         } else if (jsonData.shapes && Array.isArray(jsonData.shapes)) {
-          // New format - object with shapes and possibly editorContent
+          // New format - object with shapes and editorContent
           shapesData = jsonData.shapes;
           editorContent = jsonData.editorContent;
         } else {
           throw new Error("Data must contain a 'shapes' array or be an array of shapes");
         }
-        
-        // Check if it has valid shape objects
+
+        // Validate each shape has required properties
         for (const shape of shapesData) {
           if (!shape.type) {
-            throw new Error("Each shape must have a 'type' property");
+            throw new Error('Each shape must have a type property');
           }
         }
-        
+
         // Apply the shapes changes
         shapes = shapesData;
+        selectedShapes = [];
         
         // Apply editor content if provided
         if (editorContent !== undefined) {
           editor.setValue(editorContent);
         }
         
-        // Clear current DB store
-        const transaction = db.transaction("shapes", "readwrite");
-        const store = transaction.objectStore("shapes");
-        store.clear().onsuccess = function() {
-          // Add new shapes to DB
-          shapes.forEach(shape => {
-            // Remove any existing ID to avoid conflicts
-            delete shape.id;
-            store.add(shape);
-          });
-          
-          // Reset undo/redo stacks
-          undoStack = [];
-          redoStack = [];
-          
-          // Render and close modal
-          render();
-          codeModal.style.display = 'none';
-        };
+        saveState();
+        saveShapes();
+        render();
+        
+        // Close the modal
+        codeModal.style.display = 'none';
+        
+        // Show success message
+        showTooltip('Shapes applied successfully');
       } catch (error) {
-        alert("Error parsing JSON: " + error.message);
+        console.error('Error:', error);
+        alert('Error applying shapes: ' + error.message);
       }
     });
 
@@ -2359,12 +2383,6 @@ Generate a similar data structure based on the user's request.`
       let selectedButtonIndex = -1;
       let lastClickedButtonIndex = -1;
 
-      // Add keyboard shortcut notice
-      const notice = document.createElement('div');
-      notice.className = 'keyboard-shortcut-notice';
-      notice.textContent = 'Ctrl + ←/→ to navigate, spacebar to click';
-      document.getElementById('toolbar').appendChild(notice);
-
       // Function to update button selection
       function updateButtonSelection(index) {
         // Remove selection from all buttons
@@ -2614,7 +2632,7 @@ function shareEditableLink() {
         
         // Create URL with parameters (without viewOnly)
         const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
-        const shareUrl = `${currentUrl}?drawing=${encodeURIComponent(compressedData)}`;
+        const shareUrl = `${currentUrl}?drawing=${compressedData}`;
         
         // Copy to clipboard
         navigator.clipboard.writeText(shareUrl).then(() => {
@@ -2664,7 +2682,7 @@ function shareViewOnlyLink() {
         
         // Create URL with parameters
         const currentUrl = window.location.href.split('?')[0]; // Remove any existing parameters
-        const shareUrl = `${currentUrl}?drawing=${encodeURIComponent(compressedData)}&viewOnly=true`;
+        const shareUrl = `${currentUrl}?drawing=${compressedData}&viewOnly=true`;
         
         // Copy to clipboard
         navigator.clipboard.writeText(shareUrl).then(() => {
@@ -2944,7 +2962,7 @@ function createModifiedHtml(htmlContent, shapes, editorContent, viewOnly) {
         position: fixed;
         top: 10px;
         left: 10px;
-        background: rgba(0,0,0,0.5);
+        background: rgba(0, 0, 0, 0.5);
         color: white;
         padding: 5px 10px;
         border-radius: 3px;
