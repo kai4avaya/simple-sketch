@@ -456,6 +456,43 @@
         display: none;
       }
     }
+    
+    /* --- View-only mode: keep share button left-aligned --- */
+    body.view-only #toolbar {
+      justify-content: flex-start !important;
+      padding-left: 20px;
+      padding-right: 0;
+    }
+    body.view-only #share-dropdown-container {
+      margin-left: 0 !important;
+      margin-right: auto !important;
+      display: inline-block;
+    }
+    body.view-only #toolbar > *:not(#share-dropdown-container):not(.view-only-indicator) {
+      display: none !important;
+    }
+    body.view-only #share-dropdown-container .dropdown {
+      display: inline-block;
+    }
+    body.view-only #share-dropdown-container .dropdown-content {
+      left: 0 !important;
+      right: auto !important;
+      transform: none !important;
+    }
+    body.view-only #share-dropdown-container .dropdown-content a:not(#share-view-only-link) {
+      display: none !important;
+    }
+    body.view-only .view-only-indicator {
+      display: inline-block;
+      margin-left: 10px;
+      font-size: 13px;
+      color: white;
+      background: #2196F3;
+      padding: 5px 10px;
+      border-radius: 3px;
+      font-size: 12px;
+      z-index: 1000;
+    }
   </style>
 </head>
 <body>
